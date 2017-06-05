@@ -53,7 +53,10 @@ orte_grpcomm_base_module_t orte_grpcomm_direct_module = {
     init,
     finalize,
     xcast,
-    allgather
+    allgather,
+    NULL,
+    NULL,
+    NULL
 };
 
 /* internal functions */

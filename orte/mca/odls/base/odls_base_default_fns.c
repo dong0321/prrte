@@ -75,6 +75,7 @@
 #include "orte/mca/schizo/schizo.h"
 #include "orte/mca/state/state.h"
 #include "orte/mca/filem/filem.h"
+#include "orte/mca/propagate/propagate.h"
 
 #include "orte/util/context_fns.h"
 #include "orte/util/name_fns.h"
@@ -99,6 +100,18 @@
 
 #include "orte/mca/odls/base/base.h"
 #include "orte/mca/odls/base/odls_private.h"
+#include "orte/orted/pmix/pmix_server.h"
+
+double RTE_Wtime_test(void)
+{
+    double wtime;
+
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    wtime = tv.tv_sec;
+    wtime += (double)tv.tv_usec / 1000000.0;
+    return wtime;
+}
 
 typedef struct {
     orte_job_t *jdata;
@@ -1712,6 +1725,34 @@ void orte_odls_base_default_wait_local_proc(int fd, short sd, void *cbdata)
                              "%s odls:waitpid_fired child process %s terminated with signal",
                              ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
                              ORTE_NAME_PRINT(&proc->name) ));
+       //for perf test
+        char host_name[255];
+        gethostname(host_name, 255);
+        OPAL_OUTPUT_VERBOSE((5, orte_odls_base_framework.framework_output,
+                            "odls: proc error on host %s at time %f", host_name, RTE_Wtime_test()));
+
+        /* register an event handler for the OPAL_ERR_PROC_ABORTED event */
+        pmix_proc_t pname, psource;
+        pmix_status_t pcode = opal_pmix_convert_rc(OPAL_ERR_PROC_ABORTED);
+        OPAL_PMIX_CONVERT_NAME(&pname, &proc->name);
+        OPAL_PMIX_CONVERT_NAME(&psource, ORTE_PROC_MY_NAME);
+        pmix_info_t *pinfo;
+        PMIX_INFO_CREATE(pinfo, 1);
+        PMIX_INFO_LOAD(&pinfo[0], PMIX_EVENT_AFFECTED_PROC, &pname, PMIX_PROC );
+
+        if (OPAL_SUCCESS != PMIx_Notify_event(pcode, &psource,
+                    PMIX_RANGE_LOCAL, pinfo, 1,
+                    NULL,NULL )) {
+            OPAL_OUTPUT_VERBOSE((5, orte_odls_base_framework.framework_output,
+                        "%s odls:notify failed, release pinfo",ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+            OBJ_RELEASE(pinfo);
+        }
+        OPAL_OUTPUT_VERBOSE((5, orte_odls_base_framework.framework_output,
+                    "%s odls:event notify in odls proc %d:%d gone",
+                    ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), proc->name.jobid, proc->name.vpid));
+        /* regardless of our eventual code path, we need to
+         * flag that this proc has had its waitpid fired */
+        ORTE_FLAG_SET(proc, ORTE_PROC_FLAG_WAITPID);
         /* Do not decrement the number of local procs here. That is handled in the errmgr */
     }
 

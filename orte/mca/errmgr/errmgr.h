@@ -119,6 +119,10 @@ typedef int (*orte_errmgr_base_module_abort_peers_fn_t)(orte_process_name_t *pro
                                                         orte_std_cntr_t num_procs,
                                                         int error_code);
 
+typedef void (*orte_errmgr_base_module_start_error_detector_fn_t)(void);
+
+typedef void (*orte_errmgr_base_module_enable_detector_fn_t)(bool flag);
+
 /*
  * Module Structure
  */
@@ -131,6 +135,9 @@ struct orte_errmgr_base_module_2_3_0_t {
     orte_errmgr_base_module_log_fn_t                        logfn;
     orte_errmgr_base_module_abort_fn_t                      abort;
     orte_errmgr_base_module_abort_peers_fn_t                abort_peers;
+
+    /* start error detector and propagator */
+    orte_errmgr_base_module_enable_detector_fn_t            enable_detector;
 };
 typedef struct orte_errmgr_base_module_2_3_0_t orte_errmgr_base_module_2_3_0_t;
 typedef orte_errmgr_base_module_2_3_0_t orte_errmgr_base_module_t;

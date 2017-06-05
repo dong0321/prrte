@@ -28,6 +28,9 @@
 #ifdef HAVE_SYS_WAIT_H
 #include <sys/wait.h>
 #endif
+#include <pmix.h>
+#include <pmix_server.h>
+#include "opal/pmix/pmix-internal.h"
 
 #include "opal/util/output.h"
 #include "opal/util/printf.h"
@@ -62,6 +65,7 @@
 #include "orte/mca/errmgr/base/base.h"
 #include "orte/mca/errmgr/base/errmgr_private.h"
 
+#include "orte/mca/propagate/propagate.h"
 #include "errmgr_dvm.h"
 
 static int init(void);
@@ -75,15 +79,140 @@ orte_errmgr_base_module_t orte_errmgr_dvm_module = {
     .finalize = finalize,
     .logfn = orte_errmgr_base_log,
     .abort = orte_errmgr_base_abort,
-    .abort_peers = orte_errmgr_base_abort_peers
+    .abort_peers = orte_errmgr_base_abort_peers,
+    NULL
 };
 
-
+bool prp_regflag = 1;
 /*
  * Local functions
  */
 static void job_errors(int fd, short args, void *cbdata);
 static void proc_errors(int fd, short args, void *cbdata);
+
+static int pack_state_for_proc(opal_buffer_t *alert, orte_proc_t *child)
+{
+    int rc;
+
+    /* pack the child's vpid */
+    if (ORTE_SUCCESS != (rc = opal_dss.pack(alert, &(child->name.vpid), 1, ORTE_VPID))) {
+        ORTE_ERROR_LOG(rc);
+        return rc;
+    }
+    /* pack the pid */
+    if (ORTE_SUCCESS != (rc = opal_dss.pack(alert, &child->pid, 1, OPAL_PID))) {
+        ORTE_ERROR_LOG(rc);
+        return rc;
+    }
+    /* pack its state */
+    if (ORTE_SUCCESS != (rc = opal_dss.pack(alert, &child->state, 1, ORTE_PROC_STATE))) {
+        ORTE_ERROR_LOG(rc);
+        return rc;
+    }
+    /* pack its exit code */
+    if (ORTE_SUCCESS != (rc = opal_dss.pack(alert, &child->exit_code, 1, ORTE_EXIT_CODE))) {
+        ORTE_ERROR_LOG(rc);
+        return rc;
+    }
+
+    return ORTE_SUCCESS;
+}
+
+static void register_cbfunc(int status, size_t errhndler, void *cbdata)
+{
+    orte_propagate.register_cb();
+    OPAL_OUTPUT_VERBOSE((5, orte_errmgr_base_framework.framework_output,
+                "errmgr:dvm:event register cbfunc with status %d ", status));
+}
+
+static void error_notify_cbfunc(size_t evhdlr_registration_id,
+        pmix_status_t status,
+        const pmix_proc_t *psource,
+        pmix_info_t info[], size_t ninfo,
+        pmix_info_t *results, size_t nresults,
+        pmix_event_notification_cbfunc_fn_t cbfunc,
+        void *cbdata)
+{
+    orte_process_name_t proc, source;
+    proc.jobid = ORTE_JOBID_INVALID;
+    proc.vpid = ORTE_VPID_INVALID;
+
+    int rc;
+    orte_proc_t *temp_orte_proc;
+    opal_buffer_t *alert;
+    orte_job_t *jdata;
+    orte_plm_cmd_flag_t cmd;
+    size_t n;
+    OPAL_PMIX_CONVERT_PROCT(rc, &source, psource);
+    if (NULL != info) {
+        for (n=0; n < ninfo; n++) {
+            if (0 == strncmp(info[n].key, PMIX_EVENT_AFFECTED_PROC, PMIX_MAX_KEYLEN)) {
+                OPAL_PMIX_CONVERT_PROCT(rc, &proc, info[n].value.data.proc);
+
+                if( orte_get_proc_daemon_vpid(&proc) != ORTE_PROC_MY_NAME->vpid){
+                    return;
+                }
+                OPAL_OUTPUT_VERBOSE((5, orte_errmgr_base_framework.framework_output,
+                            "%s errmgr: dvm: error proc %s with key-value %s notified from %s",
+                            ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), ORTE_NAME_PRINT(&proc),
+                            info[n].key, ORTE_NAME_PRINT(&source)));
+
+                if (NULL == (jdata = orte_get_job_data_object(proc.jobid))) {
+                    /* must already be complete */
+                    OPAL_OUTPUT_VERBOSE((5, orte_errmgr_base_framework.framework_output,
+                                "%s errmgr:dvm:error_notify_callback NULL jdata - ignoring error",
+                                ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+                }
+                temp_orte_proc= (orte_proc_t*)opal_pointer_array_get_item(jdata->procs, proc.vpid);
+
+                alert = OBJ_NEW(opal_buffer_t);
+                /* pack update state command */
+                cmd = ORTE_PLM_UPDATE_PROC_STATE;
+                if (ORTE_SUCCESS != (rc = opal_dss.pack(alert, &cmd, 1, ORTE_PLM_CMD))) {
+                    ORTE_ERROR_LOG(rc);
+                    return;
+                }
+
+                /* pack jobid */
+                if (ORTE_SUCCESS != (rc = opal_dss.pack(alert, &proc.jobid, 1, ORTE_JOBID))) {
+                    ORTE_ERROR_LOG(rc);
+                    return;
+                }
+
+                /* proc state now is ORTE_PROC_STATE_ABORTED_BY_SIG, cause odls set state to this; code is 128+9 */
+                temp_orte_proc->state = ORTE_PROC_STATE_ABORTED_BY_SIG;
+                /* now pack the child's info */
+                if (ORTE_SUCCESS != (rc = pack_state_for_proc(alert, temp_orte_proc))) {
+                    ORTE_ERROR_LOG(rc);
+                    return;
+                }
+
+                /* send this process's info to hnp */
+                if (0 > (rc = orte_rml.send_buffer_nb(orte_mgmt_conduit,
+                                ORTE_PROC_MY_HNP, alert,
+                                ORTE_RML_TAG_PLM,
+                                orte_rml_send_callback, NULL))) {
+                    OPAL_OUTPUT_VERBOSE((5, orte_errmgr_base_framework.framework_output,
+                                "%s errmgr:dvm: send to hnp failed",
+                                ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+                    ORTE_ERROR_LOG(rc);
+                    OBJ_RELEASE(alert);
+                }
+                if (ORTE_FLAG_TEST(temp_orte_proc, ORTE_PROC_FLAG_IOF_COMPLETE) &&
+                        ORTE_FLAG_TEST(temp_orte_proc, ORTE_PROC_FLAG_WAITPID) &&
+                        !ORTE_FLAG_TEST(temp_orte_proc, ORTE_PROC_FLAG_RECORDED)) {
+                    ORTE_ACTIVATE_PROC_STATE(&proc, ORTE_PROC_STATE_TERMINATED);
+                }
+
+                orte_propagate.prp(&source.jobid, &source, &proc, OPAL_ERR_PROC_ABORTED);
+                break;
+            }
+        }
+    }
+    if (NULL != cbfunc) {
+        cbfunc(ORTE_SUCCESS, NULL, 0, NULL, NULL, cbdata);
+    }
+}
 
 static int init(void)
 {
@@ -97,6 +226,12 @@ static int init(void)
 
     /* setup state machine to trap proc errors */
     orte_state.add_proc_state(ORTE_PROC_STATE_ERROR, proc_errors, ORTE_ERROR_PRI);
+    pmix_status_t pcode = opal_pmix_convert_rc(OPAL_ERR_PROC_ABORTED);
+
+    OPAL_OUTPUT_VERBOSE((5, orte_errmgr_base_framework.framework_output,
+                "%s errmgr:dvm: register evhandler in errmgr",
+                ORTE_NAME_PRINT(ORTE_PROC_MY_NAME)));
+    PMIx_Register_event_handler(&pcode, 1, NULL, 0, error_notify_cbfunc, register_cbfunc, NULL);
 
     return ORTE_SUCCESS;
 }
@@ -453,7 +588,7 @@ static void proc_errors(int fd, short args, void *cbdata)
             ORTE_FLAG_SET(jdata, ORTE_JOB_FLAG_ABORTED);
             jdata->exit_code = pptr->exit_code;
             /* kill the job */
-            _terminate_job(jdata->jobid);
+            //_terminate_job(jdata->jobid);
         }
         break;
 
@@ -639,7 +774,7 @@ static void proc_errors(int fd, short args, void *cbdata)
          * hosed - so just exit out
          */
         if (ORTE_PROC_MY_NAME->jobid == proc->jobid) {
-            ORTE_ACTIVATE_JOB_STATE(NULL, ORTE_JOB_STATE_DAEMONS_TERMINATED);
+            //ORTE_ACTIVATE_JOB_STATE(NULL, ORTE_JOB_STATE_DAEMONS_TERMINATED);
             break;
         }
         break;

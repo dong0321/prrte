@@ -45,7 +45,6 @@
 #include "orte/mca/errmgr/base/errmgr_private.h"
 
 #include "orte/mca/errmgr/base/static-components.h"
-
 /*
  * Globals
  */
@@ -57,8 +56,10 @@ orte_errmgr_base_module_t orte_errmgr_default_fns = {
     .finalize = NULL, /* finalize */
     .logfn = orte_errmgr_base_log,
     .abort = orte_errmgr_base_abort,
-    .abort_peers = orte_errmgr_base_abort_peers
+    .abort_peers = orte_errmgr_base_abort_peers,
+    NULL
 };
+
 /* NOTE: ABSOLUTELY MUST initialize this
  * struct to include the log function as it
  * gets called even if the errmgr hasn't been

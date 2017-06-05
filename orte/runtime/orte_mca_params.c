@@ -548,7 +548,7 @@ int orte_register_params(void)
                                   OPAL_INFO_LVL_9, MCA_BASE_VAR_SCOPE_READONLY,
                                   &orte_do_not_barrier);
 
-    orte_enable_recovery = false;
+    orte_enable_recovery = true;
     (void) mca_base_var_register ("orte", "orte", NULL, "enable_recovery",
                                   "Enable recovery from process failure [Default = disabled]",
                                   MCA_BASE_VAR_TYPE_BOOL, NULL, 0, 0,
@@ -578,7 +578,7 @@ int orte_register_params(void)
         orte_enable_recovery = true;
     }
 
-    orte_abort_non_zero_exit = true;
+    orte_abort_non_zero_exit = false;
     (void) mca_base_var_register ("orte", "orte", NULL, "abort_on_non_zero_status",
                                   "Abort the job if any process returns a non-zero exit status - no restart in such cases",
                                   MCA_BASE_VAR_TYPE_BOOL, NULL, 0, 0,

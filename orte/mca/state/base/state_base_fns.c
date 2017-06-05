@@ -774,7 +774,7 @@ void orte_state_base_track_procs(int fd, short argc, void *cbdata)
             /* if this was an abnormal term, notify the other procs of the termination */
             parent.jobid = jdata->jobid;
             parent.vpid = ORTE_VPID_WILDCARD;
-            _send_notification(OPAL_ERR_PROC_ABORTED, pdata->state, &pdata->name, &parent);
+            //_send_notification(OPAL_ERR_PROC_ABORTED, pdata->state, &pdata->name, &parent);
         }
     }
 
