@@ -14,7 +14,7 @@
 # Copyright (c) 2010-2011 Oak Ridge National Labs.  All rights reserved.
 # Copyright (c) 2013-2018 Los Alamos National Security, Inc.  All rights
 #                         reserved.
-# Copyright (c) 2013-2018 Intel, Inc. All rights reserved.
+# Copyright (c) 2013-2019 Intel, Inc.  All rights reserved.
 # Copyright (c) 2017      Amazon.com, Inc. or its affiliates.
 #                         All Rights reserved.
 # $COPYRIGHT$
@@ -29,13 +29,9 @@ dist_amca_param_DATA = amca-param-sets/example.conf
 
 EXTRA_DIST = \
         make_manpage.pl \
-        completion/mpirun.sh \
-        completion/mpirun.zsh \
 	dist/make_dist_tarball \
 	dist/make-authors.pl \
 	dist/linux/prte.spec \
-	dist/mofed/compile_debian_mlnx_example.in \
-	dist/mofed/debian \
 	platform/optimized \
 	platform/intel/bend/linux \
 	platform/intel/bend/linux.conf \
@@ -44,4 +40,4 @@ EXTRA_DIST = \
 	platform/intel/bend/linux-optimized \
 	platform/intel/bend/linux-optimized.conf
 
-dist_opaldata_DATA = openmpi-valgrind.supp
+dist_prrtedata_DATA = openmpi-valgrind.supp
