@@ -1085,7 +1085,7 @@ int prun(int argc, char *argv[])
         } else {
             param = strdup(ptr);
         }
-        PMIX_INFO_LOAD(ds->info, PMIX_OUTPUT_TO_DIRECTORY, param, PMIX_STRING);
+        PMIX_INFO_LOAD(ds->info, PRRTE_JOB_OUTPUT_TO_DIRECTORY, param, PMIX_STRING);
         free(param);
     }
     /* if we were asked to merge stderr to stdout, mark it so */

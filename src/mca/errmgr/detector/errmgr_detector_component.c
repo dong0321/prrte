@@ -35,7 +35,7 @@ static int errmgr_detector_component_query(prrte_mca_base_module_t **module, int
  * Instantiate the public struct with all of our public information
  * and pointer to our public functions in it
  */
-prrte_errmgr_base_component_t prrte_mca_errmgr_detector_component = {
+prrte_errmgr_base_component_t prrte_errmgr_detector_component = {
     /* Handle the general mca_component_t struct containing
      *  meta information about the component detector
      */
@@ -62,7 +62,7 @@ static int my_priority;
 
 static int errmgr_detector_register(void)
 {
-    prrte_mca_base_component_t *c = &prrte_mca_errmgr_detector_component.base_version;
+    prrte_mca_base_component_t *c = &prrte_errmgr_detector_component.base_version;
     if ( PRRTE_PROC_IS_DAEMON )
         my_priority = 1005;
     else

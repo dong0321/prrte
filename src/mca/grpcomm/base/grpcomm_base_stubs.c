@@ -137,35 +137,35 @@ int prrte_grpcomm_API_xcast(prrte_grpcomm_signature_t *sig,
     return rc;
 }
 
-int orte_grpcomm_API_rbcast(orte_grpcomm_signature_t *sig,
-                           orte_rml_tag_t tag,
-                           opal_buffer_t *msg)
+int prrte_grpcomm_API_rbcast(prrte_grpcomm_signature_t *sig,
+                           prrte_rml_tag_t tag,
+                           prrte_buffer_t *msg)
 {
-    int rc = ORTE_ERROR;
-    opal_buffer_t *buf;
-    orte_grpcomm_base_active_t *active;
+    int rc = PRRTE_ERROR;
+    prrte_buffer_t *buf;
+    prrte_grpcomm_base_active_t *active;
 
-    OPAL_OUTPUT_VERBOSE((1, orte_grpcomm_base_framework.framework_output,
+    PRRTE_OUTPUT_VERBOSE((1, prrte_grpcomm_base_framework.framework_output,
                          "%s grpcomm:base:rbcast sending %u bytes to tag %ld",
-                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                         PRRTE_NAME_PRINT(PRRTE_PROC_MY_NAME),
                          (NULL == msg) ? 0 : (unsigned int)msg->bytes_used, (long)tag));
 
     /* this function does not access any framework-global data, and
      * so it does not require us to push it into the event library */
 
     /* prep the output buffer */
-    buf = OBJ_NEW(opal_buffer_t);
+    buf = PRRTE_NEW(prrte_buffer_t);
 
     /* setup the payload */
-    if (ORTE_SUCCESS != (rc = pack_xcast(sig, buf, msg, tag))) {
-        ORTE_ERROR_LOG(rc);
-        OBJ_RELEASE(buf);
+    if (PRRTE_SUCCESS != (rc = pack_xcast(sig, buf, msg, tag))) {
+        PRRTE_ERROR_LOG(rc);
+        PRRTE_RELEASE(buf);
         return rc;
     }
     /* cycle thru the actives and see who can send it */
-    OPAL_LIST_FOREACH(active, &orte_grpcomm_base.actives, orte_grpcomm_base_active_t) {
+    PRRTE_LIST_FOREACH(active, &prrte_grpcomm_base.actives, prrte_grpcomm_base_active_t) {
         if (NULL != active->module->rbcast) {
-            if (ORTE_SUCCESS == (rc = active->module->rbcast(buf))) {
+            if (PRRTE_SUCCESS == (rc = active->module->rbcast(buf))) {
                 break;
             }
         }
@@ -174,14 +174,14 @@ int orte_grpcomm_API_rbcast(orte_grpcomm_signature_t *sig,
     return rc;
 }
 
-int orte_grpcomm_API_register_cb(orte_grpcomm_rbcast_cb_t callback)
+int prrte_grpcomm_API_register_cb(prrte_grpcomm_rbcast_cb_t callback)
 {
-    int rc = ORTE_ERROR;
-    orte_grpcomm_base_active_t *active;
+    int rc = PRRTE_ERROR;
+    prrte_grpcomm_base_active_t *active;
 
-    OPAL_LIST_FOREACH(active, &orte_grpcomm_base.actives, orte_grpcomm_base_active_t) {
+    PRRTE_LIST_FOREACH(active, &prrte_grpcomm_base.actives, prrte_grpcomm_base_active_t) {
         if (NULL != active->module->register_cb) {
-            if (ORTE_ERROR != (rc = active->module->register_cb(callback))) {
+            if (PRRTE_ERROR != (rc = active->module->register_cb(callback))) {
                 break;
             }
         }

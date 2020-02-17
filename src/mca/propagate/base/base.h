@@ -32,15 +32,15 @@
  */
 BEGIN_C_DECLS
 
-PRRTE_DECLSPEC extern prrte_propagate_base_module_t prrte_propagate;
+PRRTE_EXPORT extern prrte_propagate_base_module_t prrte_propagate;
 /*
  * MCA framework
  */
-PRRTE_DECLSPEC extern prrte_mca_base_framework_t prrte_propagate_base_framework;
+PRRTE_EXPORT extern prrte_mca_base_framework_t prrte_propagate_base_framework;
 /*
  * Select an available component.
  */
-PRRTE_DECLSPEC int prrte_propagate_base_select(void);
+PRRTE_EXPORT int prrte_propagate_base_select(void);
 
 END_C_DECLS
 #endif

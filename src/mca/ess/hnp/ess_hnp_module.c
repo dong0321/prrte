@@ -37,7 +37,7 @@
 #include <unistd.h>
 #endif
 
-#include "prrte/mca/propagate/base/base.h"
+#include "src/mca/propagate/base/base.h"
 
 #include "src/include/hash_string.h"
 #include "src/class/prrte_hash_table.h"
@@ -243,7 +243,7 @@ static int rte_init(int argc, char **argv)
     }
 
     /* open the propagator */
-    if (PRRTE_SUCCESS != (ret = mca_base_framework_open(&prrte_propagate_base_framework, 0))) {
+    if (PRRTE_SUCCESS != (ret = prrte_mca_base_framework_open(&prrte_propagate_base_framework, 0))) {
         error = "prrte_propagate_base_open";
         goto error;
     }
@@ -686,9 +686,9 @@ static int rte_finalize(void)
      * the required facilities until the rml and oob are offline */
     prrte_errmgr.finalize();
 
-    (void) mca_base_framework_close(&prrte_propagate_base_framework);
+    (void) prrte_mca_base_framework_close(&prrte_propagate_base_framework);
     /* cleanup the pstat stuff */
-    (void) mca_base_framework_close(&prrte_pstat_base_framework);
+    (void) prrte_mca_base_framework_close(&prrte_pstat_base_framework);
 
     /* remove my contact info file, if we have session directories */
     if (NULL != prrte_process_info.jobfam_session_dir) {

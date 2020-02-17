@@ -41,9 +41,9 @@ static prrte_errmgr_detector_t prrte_errmgr_world_detector;
  * Local Component structures
  */
 
-PRRTE_MODULE_DECLSPEC extern prrte_errmgr_base_component_t mca_errmgr_detector_component;
+PRRTE_MODULE_EXPORT extern prrte_errmgr_base_component_t prrte_errmgr_detector_component;
 
-PRRTE_DECLSPEC extern prrte_errmgr_base_module_t prrte_errmgr_detector_module;
+PRRTE_EXPORT extern prrte_errmgr_base_module_t prrte_errmgr_detector_module;
 
 /*
  * Propagator functions

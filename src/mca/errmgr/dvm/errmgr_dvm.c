@@ -65,7 +65,7 @@
 #include "src/mca/errmgr/base/base.h"
 #include "src/mca/errmgr/base/errmgr_private.h"
 
-#include "prrte/mca/propagate/propagate.h"
+#include "src/mca/propagate/propagate.h"
 #include "errmgr_dvm.h"
 
 static int init(void);
@@ -165,7 +165,7 @@ static void error_notify_cbfunc(size_t evhdlr_registration_id,
                 }
                 temp_orte_proc= (prrte_proc_t*)prrte_pointer_array_get_item(jdata->procs, proc.vpid);
 
-                alert = OBJ_NEW(prrte_buffer_t);
+                alert = PRRTE_NEW(prrte_buffer_t);
                 /* pack update state command */
                 cmd = PRRTE_PLM_UPDATE_PROC_STATE;
                 if (PRRTE_SUCCESS != (prrte_dss.pack(alert, &cmd, 1, PRRTE_PLM_CMD))) {
@@ -188,7 +188,7 @@ static void error_notify_cbfunc(size_t evhdlr_registration_id,
                 }
 
                 /* send this process's info to hnp */
-                if (0 > (rc = prrte_rml.send_buffer_nb(prrte_mgmt_conduit,
+                if (0 > (rc = prrte_rml.send_buffer_nb(
                                 PRRTE_PROC_MY_HNP, alert,
                                 PRRTE_RML_TAG_PLM,
                                 prrte_rml_send_callback, NULL))) {
@@ -196,7 +196,7 @@ static void error_notify_cbfunc(size_t evhdlr_registration_id,
                                 "%s errmgr:dvm: send to hnp failed",
                                 PRRTE_NAME_PRINT(PRRTE_PROC_MY_NAME)));
                     PRRTE_ERROR_LOG(rc);
-                    OBJ_RELEASE(alert);
+                    PRRTE_RELEASE(alert);
                 }
                 if (PRRTE_FLAG_TEST(temp_orte_proc, PRRTE_PROC_FLAG_IOF_COMPLETE) &&
                         PRRTE_FLAG_TEST(temp_orte_proc, PRRTE_PROC_FLAG_WAITPID) &&

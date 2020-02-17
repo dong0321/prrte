@@ -72,7 +72,7 @@ struct prrte_propagate_base_module_2_3_0_t {
 typedef struct prrte_propagate_base_module_2_3_0_t prrte_propagate_base_module_2_3_0_t;
 typedef prrte_propagate_base_module_2_3_0_t prrte_propagate_base_module_t;
 
-PRRTE_DECLSPEC extern prrte_propagate_base_module_t prrte_propagate;
+PRRTE_EXPORT extern prrte_propagate_base_module_t prrte_propagate;
 
 /*
  *Propagate Component

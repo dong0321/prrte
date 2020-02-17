@@ -26,8 +26,7 @@
 #include "src/dss/dss.h"
 #include "src/pmix/pmix-internal.h"
 
-#include "src/mca/base/mca_base_var.h"
-#include "src/mca/timer/base/base.h"
+#include "src/mca/base/prrte_mca_base_var.h"
 #include "src/threads/threads.h"
 #include "src/mca/rml/rml.h"
 #include "src/mca/odls/odls.h"
@@ -49,9 +48,9 @@
 #include "src/util/proc_info.h"
 #include "src/util/show_help.h"
 
-#include "src/runtime/src_globals.h"
-#include "src/runtime/src_locks.h"
-#include "src/runtime/src_quit.h"
+#include "src/runtime/prrte_globals.h"
+#include "src/runtime/prrte_locks.h"
+#include "src/runtime/prrte_quit.h"
 #include "src/runtime/data_type_support/prrte_dt_support.h"
 
 #include "src/mca/errmgr/errmgr.h"
@@ -201,8 +200,8 @@ static void error_notify_cbfunc(size_t evhdlr_registration_id,
                     return;
                 }
 
-                /* proc state now is PRRTE_PROC_STATE_ABPRRTED_BY_SIG, cause odls set state to this; code is 128+9 */
-                temp_prrte_proc->state = PRRTE_PROC_STATE_ABPRRTED_BY_SIG;
+                /* proc state now is PRRTE_PROC_STATE_ABORTED_BY_SIG, cause odls set state to this; code is 128+9 */
+                temp_prrte_proc->state = PRRTE_PROC_STATE_ABORTED_BY_SIG;
                 /* now pack the child's info */
                 if (PRRTE_SUCCESS != (rc = pack_state_for_proc(alert, temp_prrte_proc))) {
                     PRRTE_ERROR_LOG(rc);
@@ -210,7 +209,7 @@ static void error_notify_cbfunc(size_t evhdlr_registration_id,
                 }
 
                 /* send this process's info to hnp */
-                if (0 > (rc = prrte_rml.send_buffer_nb(prrte_mgmt_conduit,
+                if (0 > (rc = prrte_rml.send_buffer_nb(
                                 PRRTE_PROC_MY_HNP, alert,
                                 PRRTE_RML_TAG_PLM,
                                 prrte_rml_send_callback, NULL))) {
@@ -226,7 +225,7 @@ static void error_notify_cbfunc(size_t evhdlr_registration_id,
                     PRRTE_ACTIVATE_PROC_STATE(&proc, PRRTE_PROC_STATE_TERMINATED);
                 }
 
-                prrte_propagate.prp(&source.jobid, &source, &proc, PRRTE_ERR_PROC_ABPRRTED);
+                prrte_propagate.prp(&source.jobid, &source, &proc, PRRTE_ERR_PROC_ABORTED);
                 break;
             }
         }
@@ -323,7 +322,7 @@ int prrte_errmgr_enable_detector(bool enable_flag)
         int  ndmns, i;
         uint32_t vpid;
 
-        pmix_status_t pcode = prrte_pmix_convert_rc(PRRTE_ERR_PROC_ABPRRTED);
+        pmix_status_t pcode = prrte_pmix_convert_rc(PRRTE_ERR_PROC_ABORTED);
 
         PRRTE_OUTPUT_VERBOSE((5, prrte_errmgr_base_framework.framework_output,
                     "%s errmgr:detector: register evhandler in errmgr",
@@ -417,7 +416,8 @@ static int fd_heartbeat_request(prrte_errmgr_detector_t* detector) {
         if (PRRTE_SUCCESS != (ret = prrte_dss.pack(buffer, &prrte_process_info.my_name.vpid, 1,PRRTE_VPID))) {
             PRRTE_ERROR_LOG(ret);
         }
-        if (0 > (ret = prrte_rml.send_buffer_nb(prrte_mgmt_conduit, &daemon, buffer,
+        if (0 > (ret = prrte_rml.send_buffer_nb(
+                        &daemon, buffer,
                         PRRTE_RML_TAG_HEARTBEAT_REQUEST, prrte_rml_send_callback, NULL))) {
             PRRTE_ERROR_LOG(ret);
         }
@@ -490,7 +490,7 @@ static void fd_event_cb(int fd, short flags, void* pdetector) {
             PRRTE_OUTPUT_VERBOSE((5, prrte_errmgr_base_framework.framework_output,
                         "errmgr:detector %d observing %d",
                         prrte_process_info.my_name.vpid, detector->hb_observing));
-            prrte_propagate.prp(&temp_proc_name.jobid, NULL, &temp_proc_name,PRRTE_ERR_PROC_ABPRRTED );
+            prrte_propagate.prp(&temp_proc_name.jobid, NULL, &temp_proc_name,PRRTE_ERR_PROC_ABORTED );
 
             /* with every 8 failed nodes realloc 8 more slots to store the vpid of failed nodes */
             if( (detector->failed_node_count / 8) > 0 && (detector->failed_node_count % 8) == 0 )
@@ -534,7 +534,7 @@ static int fd_heartbeat_send(prrte_errmgr_detector_t* detector) {
         PRRTE_ERROR_LOG(ret);
     }
     /* send the heartbeat with eager send */
-    if (0 > (ret  = prrte_rml.send_buffer_nb(prrte_mgmt_conduit,
+    if (0 > (ret  = prrte_rml.send_buffer_nb(
                     &daemon,
                     buffer,PRRTE_RML_TAG_HEARTBEAT,
                     prrte_rml_send_callback, NULL))) {

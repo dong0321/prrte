@@ -89,10 +89,10 @@ PRRTE_EXPORT int prrte_grpcomm_API_allgather(prrte_grpcomm_signature_t *sig,
                                              prrte_grpcomm_cbfunc_t cbfunc,
                                              void *cbdata);
 /* reliable broadcast API */
-ORTE_DECLSPEC int orte_grpcomm_API_rbcast(orte_grpcomm_signature_t *sig,
-                                         orte_rml_tag_t tag,
-                                         opal_buffer_t *buf);
-ORTE_DECLSPEC int orte_grpcomm_API_register_cb(orte_grpcomm_rbcast_cb_t callback);
+PRRTE_EXPORT int prrte_grpcomm_API_rbcast(prrte_grpcomm_signature_t *sig,
+                                         prrte_rml_tag_t tag,
+                                         prrte_buffer_t *buf);
+PRRTE_EXPORT int prrte_grpcomm_API_register_cb(prrte_grpcomm_rbcast_cb_t callback);
 
 PRRTE_EXPORT prrte_grpcomm_coll_t* prrte_grpcomm_base_get_tracker(prrte_grpcomm_signature_t *sig, bool create);
 PRRTE_EXPORT void prrte_grpcomm_base_mark_distance_recv(prrte_grpcomm_coll_t *coll, uint32_t distance);

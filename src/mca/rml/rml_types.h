@@ -183,16 +183,16 @@ BEGIN_C_DECLS
 /* pmix log requests */
 #define PRRTE_RML_TAG_LOGGING                65
 /* error propagate  */
-#define ORTE_RML_TAG_RBCAST                 66
-#define ORTE_RML_TAG_BMGXCAST               67
-#define ORTE_RML_TAG_ALLGATHER_BMG          68
-#define ORTE_RML_TAG_BMG_COLL_RELEASE       69
+#define PRRTE_RML_TAG_RBCAST                 66
+#define PRRTE_RML_TAG_BMGXCAST               67
+#define PRRTE_RML_TAG_ALLGATHER_BMG          68
+#define PRRTE_RML_TAG_BMG_COLL_RELEASE       69
 
 /* heartbeat request */
-#define ORTE_RML_TAG_HEARTBEAT_REQUEST      70
+#define PRRTE_RML_TAG_HEARTBEAT_REQUEST      70
 
 /* error propagate  */
-#define ORTE_RML_TAG_PROPAGATE              99
+#define PRRTE_RML_TAG_PROPAGATE              99
 
 #define PRRTE_RML_TAG_MAX                   100
 

@@ -28,11 +28,11 @@ BEGIN_C_DECLS
  * Local Component structures
  */
 
-PRRTE_MODULE_DECLSPEC extern prrte_propagate_base_component_t mca_propagate_prperror_component;
+PRRTE_MODULE_EXPORT extern prrte_propagate_base_component_t prrte_propagate_prperror_component;
 
-PRRTE_DECLSPEC extern prrte_propagate_base_module_t prrte_propagate_prperror_module;
+PRRTE_EXPORT extern prrte_propagate_base_module_t prrte_propagate_prperror_module;
 
-PRRTE_DECLSPEC extern prrte_list_t prrte_error_procs;
+PRRTE_EXPORT extern prrte_list_t prrte_error_procs;
 
 END_C_DECLS
 

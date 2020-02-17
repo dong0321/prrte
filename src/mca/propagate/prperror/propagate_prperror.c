@@ -297,8 +297,8 @@ static int prrte_propagate_prperror(prrte_jobid_t *job, prrte_process_name_t *so
                     return rc;
                 }
 
-                /* proc state now is PRRTE_PROC_STATE_ABPRRTED_BY_SIG, cause odls set state to this; code is 128+9 */
-                pptr->state = PRRTE_PROC_STATE_ABPRRTED_BY_SIG;
+                /* proc state now is PRRTE_PROC_STATE_ABORTED_BY_SIG, cause odls set state to this; code is 128+9 */
+                pptr->state = PRRTE_PROC_STATE_ABORTED_BY_SIG;
                 /* pack the child's vpid */
                 if (PRRTE_SUCCESS != (rc = prrte_dss.pack(alert, &(pptr->name.vpid), 1, PRRTE_VPID))) {
                     PRRTE_ERROR_LOG(rc);
@@ -321,7 +321,7 @@ static int prrte_propagate_prperror(prrte_jobid_t *job, prrte_process_name_t *so
                 }
 
                 /* send this process's info to hnp */
-                if (0 > (rc = prrte_rml.send_buffer_nb(prrte_mgmt_conduit,
+                if (0 > (rc = prrte_rml.send_buffer_nb(
                                 PRRTE_PROC_MY_HNP, alert,
                                 PRRTE_RML_TAG_PLM,
                                 prrte_rml_send_callback, NULL))) {

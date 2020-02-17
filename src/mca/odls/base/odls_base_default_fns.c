@@ -1742,7 +1742,7 @@ void prrte_odls_base_default_wait_local_proc(int fd, short sd, void *cbdata)
        //for perf test
         char host_name[255];
         gethostname(host_name, 255);
-        prrte_OUTPUT_VERBOSE((5, prrte_odls_base_framework.framework_output,
+        PRRTE_OUTPUT_VERBOSE((5, prrte_odls_base_framework.framework_output,
                             "odls: proc error on host %s at time %f", host_name, RTE_Wtime_test()));
 
         /* register an event handler for the PRRTE_ERR_PROC_ABORTED event */
@@ -1754,12 +1754,12 @@ void prrte_odls_base_default_wait_local_proc(int fd, short sd, void *cbdata)
         PMIX_INFO_CREATE(pinfo, 1);
         PMIX_INFO_LOAD(&pinfo[0], PMIX_EVENT_AFFECTED_PROC, &pname, PMIX_PROC );
 
-        if (OPAL_SUCCESS != PMIx_Notify_event(pcode, &psource,
+        if (PRRTE_SUCCESS != PMIx_Notify_event(pcode, &psource,
                     PMIX_RANGE_LOCAL, pinfo, 1,
                     NULL,NULL )) {
             PRRTE_OUTPUT_VERBOSE((5, prrte_odls_base_framework.framework_output,
                         "%s odls:notify failed, release pinfo",PRRTE_NAME_PRINT(PRRTE_PROC_MY_NAME)));
-            OBJ_RELEASE(pinfo);
+            PRRTE_RELEASE(pinfo);
         }
         PRRTE_OUTPUT_VERBOSE((5, prrte_odls_base_framework.framework_output,
                     "%s odls:event notify in odls proc %d:%d gone",
@@ -1767,8 +1767,6 @@ void prrte_odls_base_default_wait_local_proc(int fd, short sd, void *cbdata)
         /* regardless of our eventual code path, we need to
          * flag that this proc has had its waitpid fired */
         PRRTE_FLAG_SET(proc, PRRTE_PROC_FLAG_WAITPID);
-                             PRRTE_NAME_PRINT(PRRTE_PROC_MY_NAME),
-                             PRRTE_NAME_PRINT(&proc->name) ));
         /* Do not decrement the number of local procs here. That is handled in the errmgr */
     }
 

@@ -10,6 +10,12 @@
  * $HEADER$
  */
 
+#include "prrte_config.h"
+#include "constants.h"
+
+#include "src/mca/mca.h"
+#include "src/runtime/prrte_globals.h"
+#include "src/mca/base/prrte_mca_base_var.h"
 
 #include "src/util/proc_info.h"
 
@@ -18,13 +24,13 @@
 static int my_priority=5;
 static int bmg_open(void);
 static int bmg_close(void);
-static int bmg_query(mca_base_module_t **module, int *priority);
+static int bmg_query(prrte_mca_base_module_t **module, int *priority);
 static int bmg_register(void);
 
 /*
  * Struct of function pointers that need to be initialized
  */
-prrte_grpcomm_base_component_t mca_grpcomm_bmg_component = {
+prrte_grpcomm_base_component_t prrte_grpcomm_bmg_component = {
     .base_version = {
         PRRTE_GRPCOMM_BASE_VERSION_3_0_0,
 
@@ -44,7 +50,7 @@ prrte_grpcomm_base_component_t mca_grpcomm_bmg_component = {
 
 static int bmg_register(void)
 {
-    prrte_mca_base_component_t *c = &prrte_mca_grpcomm_bmg_component.base_version;
+    prrte_mca_base_component_t *c = &prrte_grpcomm_bmg_component.base_version;
 
     /* make the priority adjustable so users can select
      * bmg for use by apps without affecting daemons

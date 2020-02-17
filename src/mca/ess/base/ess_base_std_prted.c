@@ -43,7 +43,6 @@
 #include "src/mca/sstore/base/base.h"
 #endif
 #include "src/util/proc_info.h"
-#include "src/util/proc.h"
 
 #include "src/dss/dss.h"
 #include "src/event/event-internal.h"
@@ -219,7 +218,7 @@ int prrte_ess_base_prted_setup(void)
         goto error;
     }
     /* open the propagate */
-    if (PRRTE_SUCCESS != (ret = mca_base_framework_open(&prrte_propagate_base_framework, 0))) {
+    if (PRRTE_SUCCESS != (ret = prrte_mca_base_framework_open(&prrte_propagate_base_framework, 0))) {
         PRRTE_ERROR_LOG(ret);
         error = "prrte_propagate_base_open";
         goto error;
@@ -440,27 +439,6 @@ int prrte_ess_base_prted_setup(void)
         goto error;
     }
 
-    /* get a conduit for our use - we never route IO over fabric */
-    OBJ_CONSTRUCT(&transports, prrte_list_t);
-    prrte_set_attribute(&transports, PRRTE_RML_TRANSPORT_TYPE,
-                       ORTE_ATTR_LOCAL, prrte_mgmt_transport, PRRTE_STRING);
-    if (PRRTE_RML_CONDUIT_INVALID == (prrte_mgmt_conduit = prrte_rml.open_conduit(&transports))) {
-        ret = PRRTE_ERR_OPEN_CONDUIT_FAIL;
-        error = "prrte_rml_open_mgmt_conduit";
-        goto error;
-    }
-    PRRTE_LIST_DESTRUCT(&transports);
-
-    OBJ_CONSTRUCT(&transports, prrte_list_t);
-    prrte_set_attribute(&transports, PRRTE_RML_TRANSPORT_TYPE,
-                       PRRTE_ATTR_LOCAL, prrte_coll_transport, PRRTE_STRING);
-    if (PRRTE_RML_CONDUIT_INVALID == (prrte_coll_conduit = prrte_rml.open_conduit(&transports))) {
-        ret = PRRTE_ERR_OPEN_CONDUIT_FAIL;
-        error = "prrte_rml_open_coll_conduit";
-        goto error;
-    }
-    PRRTE_LIST_DESTRUCT(&transports);
-
     /*
      * Group communications
      */
@@ -603,13 +581,11 @@ int prrte_ess_base_prted_finalize(void)
     if ( NULL != prrte_propagate.finalize ) {
         prrte_propagate.finalize();
     }
-    (void) mca_base_framework_close(&prrte_propagate_base_framework);
+    (void) prrte_mca_base_framework_close(&prrte_propagate_base_framework);
 
     if ( NULL != prrte_errmgr.finalize ) {
         prrte_errmgr.finalize();
     }
-    /* release the conduits */
-    prrte_rml.close_conduit(prrte_mgmt_conduit);
 
     /* close frameworks */
     (void) prrte_mca_base_framework_close(&prrte_filem_base_framework);

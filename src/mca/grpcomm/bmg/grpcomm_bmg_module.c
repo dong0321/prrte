@@ -32,7 +32,7 @@
 #include "src/util/proc_info.h"
 #include "src/mca/routed/routed.h"
 #include "src/mca/errmgr/detector/errmgr_detector.h"
-
+#include "src/mca/compress/compress.h"
 #include "src/mca/grpcomm/base/base.h"
 #include "grpcomm_bmg.h"
 
@@ -154,7 +154,7 @@ static int rbcast(prrte_buffer_t *buf)
                     "%s grpcomm:bmg: broadcast message in %d daemons to %s",
                     PRRTE_NAME_PRINT(PRRTE_PROC_MY_NAME), nprocs,
                     PRRTE_NAME_PRINT(&daemon)));
-        if(0 > (rc = prrte_rml.send_buffer_nb(prrte_coll_conduit, &daemon, buf,
+        if(0 > (rc = prrte_rml.send_buffer_nb(&daemon, buf,
                         PRRTE_RML_TAG_RBCAST, prrte_rml_send_callback, NULL))) {
             PRRTE_ERROR_LOG(rc);
         }
@@ -220,7 +220,7 @@ static void rbcast_recv(int status, prrte_process_name_t* sender,
             return;
         }
         /* decompress the data */
-        if (prrte_util_uncompress_block(&cmpdata, cmplen,packed_data, inlen)) {
+        if (prrte_compress.decompress_block(&cmpdata, cmplen,packed_data, inlen)) {
             /* the data has been uncompressed */
             prrte_dss.load(&datbuf, cmpdata, cmplen);
             data = &datbuf;

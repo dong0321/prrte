@@ -25,7 +25,7 @@ BEGIN_C_DECLS
  * Grpcomm interfaces
  */
 
-PRRTE_MODULE_DECLSPEC extern prrte_grpcomm_base_component_t prrte_mca_grpcomm_bmg_component;
+PRRTE_MODULE_EXPORT extern prrte_grpcomm_base_component_t prrte_grpcomm_bmg_component;
 extern prrte_grpcomm_base_module_t prrte_grpcomm_bmg_module;
 
 END_C_DECLS

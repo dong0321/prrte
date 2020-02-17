@@ -563,9 +563,9 @@ extern char *prrte_net_private_ipv4;
 extern char *prrte_set_max_sys_limits;
 
 /* Detector enable/disable flag */
-ORTE_DECLSPEC extern bool orte_errmgr_detector_enable_flag;
-ORTE_DECLSPEC extern double orte_errmgr_heartbeat_period;
-ORTE_DECLSPEC extern double orte_errmgr_heartbeat_timeout;
+PRRTE_EXPORT extern bool prrte_errmgr_detector_enable_flag;
+PRRTE_EXPORT extern double prrte_errmgr_heartbeat_period;
+PRRTE_EXPORT extern double prrte_errmgr_heartbeat_timeout;
 
 END_C_DECLS
 

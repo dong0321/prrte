@@ -35,7 +35,7 @@ static int propagate_prperror_component_query(prrte_mca_base_module_t **module, 
  * Instantiate the public struct with all of our public information
  * and pointer to our public functions in it
  */
-prrte_propagate_base_component_t mca_propagate_prperror_component = {
+prrte_propagate_base_component_t prrte_propagate_prperror_component = {
     /* Handle the general mca_component_t struct containing
      *  meta information about the component prperror
      */
@@ -62,7 +62,7 @@ static int my_priority;
 
 static int propagate_prperror_register(void)
 {
-    prrte_mca_base_component_t *c = &mca_propagate_prperror_component.base_version;
+    prrte_mca_base_component_t *c = &prrte_propagate_prperror_component.base_version;
 
     my_priority = 1000;
     (void) prrte_mca_base_component_var_register(c, "priority",
@@ -87,7 +87,7 @@ static int propagate_prperror_close(void)
 static int propagate_prperror_component_query(prrte_mca_base_module_t **module, int *priority)
 {
     /* only daemon propagate */
-    if (PRRTE_PROC_IS_DAEMON || PRRTE_PROC_IS_HNP ) {
+    if (PRRTE_PROC_IS_DAEMON || PRRTE_PROC_IS_MASTER ) {
         *priority = my_priority;
         *module = (prrte_mca_base_module_t *)&prrte_propagate_prperror_module;
         return PRRTE_SUCCESS;

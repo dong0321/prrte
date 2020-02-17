@@ -51,7 +51,7 @@ prrte_grpcomm_base_t prrte_grpcomm_base = {{{0}}};
 
 prrte_grpcomm_API_module_t prrte_grpcomm = {
     prrte_grpcomm_API_xcast,
-    prrte_grpcomm_API_allgather
+    prrte_grpcomm_API_allgather,
     prrte_grpcomm_API_rbcast,
     prrte_grpcomm_API_register_cb,
     NULL
