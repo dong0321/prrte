@@ -17,6 +17,8 @@
  * Copyright (c) 2013-2020 Intel, Inc.  All rights reserved.
  * Copyright (c) 2015-2019 Research Organization for Information Science
  *                         and Technology (RIST).  All rights reserved.
+ * Copyright (c) 2020      Geoffroy Vallee. All rights reserved.
+ * Copyright (c) 2020      IBM Corporation.  All rights reserved.
  * $COPYRIGHT$
  *
  * Additional copyrights may follow
@@ -151,11 +153,12 @@ static pmix_proc_t myproc;
 static bool forcibly_die=false;
 static prrte_event_t term_handler;
 static int term_pipe[2];
-static prrte_atomic_lock_t prun_abort_inprogress_lock = {0};
+static prrte_atomic_lock_t prun_abort_inprogress_lock = PRRTE_ATOMIC_LOCK_INIT;
 static prrte_event_base_t *myevbase = NULL;
 static bool proxyrun = false;
 static bool verbose = false;
 static prrte_cmd_line_t *prrte_cmd_line = NULL;
+static bool want_prefix_by_default = (bool) PRRTE_WANT_PRRTE_PREFIX_BY_DEFAULT;
 
 /* prun-specific options */
 static prrte_cmd_line_init_t cmd_line_init[] = {
@@ -260,11 +263,14 @@ static prrte_cmd_line_init_t cmd_line_init[] = {
 
 
     /* User-level debugger arguments */
-    { '\0', "debug", 1, PRRTE_CMD_LINE_TYPE_BOOL,
+    { '\0', "debug", 1, PRRTE_CMD_LINE_TYPE_STRING,
       "Invoke the indicated user-level debugger (provide a comma-delimited list of debuggers to search for)",
       PRRTE_CMD_LINE_OTYPE_DEBUG },
-    { '\0', "output-proctable", 1, PRRTE_CMD_LINE_TYPE_BOOL,
+    { '\0', "output-proctable", 1, PRRTE_CMD_LINE_TYPE_STRING,
       "Print the complete proctable to stdout [-], stderr [+], or a file [anything else] after launch",
+      PRRTE_CMD_LINE_OTYPE_DEBUG },
+    { '\0', "stop-on-exec", 0, PRRTE_CMD_LINE_TYPE_BOOL,
+      "If supported, stop each process at start of execution",
       PRRTE_CMD_LINE_OTYPE_DEBUG },
 
 
@@ -283,8 +289,8 @@ static prrte_cmd_line_init_t cmd_line_init[] = {
       PRRTE_CMD_LINE_OTYPE_LAUNCH },
     /* Export environment variables; potentially used multiple times,
        so it does not make sense to set into a variable */
-    { 'x', NULL, 1, PRRTE_CMD_LINE_TYPE_NULL,
-      "Export an environment variable, optionally specifying a value (e.g., \"-x foo\" exports the environment variable foo and takes its value from the current environment; \"-x foo=bar\" exports the environment variable name foo and sets its value to \"bar\" in the started processes)",
+    { 'x', NULL, 1, PRRTE_CMD_LINE_TYPE_STRING,
+      "Export an environment variable, optionally specifying a value (e.g., \"-x foo\" exports the environment variable foo and takes its value from the current environment; \"-x foo=bar\" exports the environment variable name foo and sets its value to \"bar\" in the started processes; \"-x foo*\" exports all current environmental variables starting with \"foo\")",
       PRRTE_CMD_LINE_OTYPE_LAUNCH },
     { '\0', "wdir", 1, PRRTE_CMD_LINE_TYPE_STRING,
       "Set the working directory of the started processes",
@@ -430,8 +436,6 @@ static void defhandler(size_t evhdlr_registration_id,
 {
     prrte_pmix_lock_t *lock = NULL;
     size_t n;
-    pmix_proc_t target;
-    pmix_info_t directive;
 
     if (verbose) {
         prrte_output(0, "PRUN: DEFHANDLER WITH STATUS %s(%d)", PMIx_Error_string(status), status);
@@ -439,6 +443,9 @@ static void defhandler(size_t evhdlr_registration_id,
 
 #if PMIX_NUMERIC_VERSION >= 0x00040000
     if (PMIX_ERR_IOF_FAILURE == status) {
+        pmix_proc_t target;
+        pmix_info_t directive;
+
         /* tell PRRTE to terminate our job */
         PRRTE_PMIX_CONVERT_JOBID(target.nspace, myjobid);
         target.rank = PMIX_RANK_WILDCARD;
@@ -472,8 +479,9 @@ static void defhandler(size_t evhdlr_registration_id,
         /* release the lock */
         PRRTE_PMIX_WAKEUP_THREAD(lock);
     }
-
+#if PMIX_NUMERIC_VERSION >= 0x00040000
   progress:
+#endif
     /* we _always_ have to execute the evhandler callback or
      * else the event progress engine will hang */
     if (NULL != cbfunc) {
@@ -600,7 +608,7 @@ static void launchhandler(size_t evhdlr_registration_id,
 int prun(int argc, char *argv[])
 {
     int rc=1, i;
-    char *param, *ptr;
+    char *param, *ptr, *tpath;
     prrte_pmix_lock_t lock, rellock;
     prrte_list_t apps;
     prrte_pmix_app_t *app;
@@ -615,7 +623,9 @@ int prun(int argc, char *argv[])
     size_t napps;
     char nspace[PMIX_MAX_NSLEN+1];
     mylock_t mylock;
+#if PMIX_NUMERIC_VERSION >= 0x00040000
     bool notify_launch = false;
+#endif
     char **prteargs = NULL;
     FILE *fp;
     char buf[2048];
@@ -634,25 +644,6 @@ int prun(int argc, char *argv[])
     prrte_tool_basename = prrte_basename(argv[0]);
     if (0 != strcmp(prrte_tool_basename, "prun")) {
         proxyrun = true;
-        if (NULL != strchr(argv[0], '/')) {
-            /* see if we were given a path to the proxy */
-            ptr = prrte_dirname(argv[0]);
-            if (NULL == ptr) {
-                fprintf(stderr, "Could not parse the given cmd line\n");
-                exit(1);
-            }
-            /* they gave us a path, so prefix the "prte" cmd with it */
-            if ('/' == ptr[strlen(ptr)-1]) {
-                prrte_asprintf(&param, "%sprte", ptr);
-            } else {
-                prrte_asprintf(&param, "%s/prte", ptr);
-            }
-            prrte_argv_append_nosize(&prteargs, param);
-            free(ptr);
-            free(param);
-        } else {
-            prrte_argv_append_nosize(&prteargs, "prte");
-        }
     }
 
     /* setup our cmd line */
@@ -673,6 +664,8 @@ int prun(int argc, char *argv[])
         return rc;
     }
     /* scan for personalities */
+    prrte_argv_append_unique_nosize(&prrte_schizo_base.personalities, "prrte", false);
+    prrte_argv_append_unique_nosize(&prrte_schizo_base.personalities, "pmix", false);
     for (i=0; NULL != argv[i]; i++) {
         if (0 == strcmp(argv[i], "--personality")) {
             prrte_argv_append_unique_nosize(&prrte_schizo_base.personalities, argv[i+1], false);
@@ -727,7 +720,7 @@ int prun(int argc, char *argv[])
     if (prrte_cmd_line_is_taken(prrte_cmd_line, "help")) {
         char *str, *args = NULL;
         args = prrte_cmd_line_get_usage_msg(prrte_cmd_line, false);
-        str = prrte_show_help_string("help-prrterun.txt", "prrterun:usage", false,
+        str = prrte_show_help_string("help-prun.txt", "prun:usage", false,
                                     prrte_tool_basename, "PRRTE", PRRTE_VERSION,
                                     prrte_tool_basename, args,
                                     PACKAGE_BUGREPORT);
@@ -747,6 +740,100 @@ int prun(int argc, char *argv[])
      */
     if (0 == geteuid()) {
         prrte_schizo.allow_run_as_root(prrte_cmd_line);  // will exit us if not allowed
+    }
+
+    if (proxyrun) {
+        tpath = NULL;
+        char *tmp_basename;
+        if ('/' == argv[0][0] ) {
+            tpath = prrte_dirname(argv[0]);
+        }
+        else if( !prrte_cmd_line_is_taken(prrte_cmd_line, "prefix") ) {
+            /* get the absolute path of our command for relative paths */
+            param = prrte_find_absolute_path(argv[0]);
+            if (NULL == param) {
+                fprintf(stderr, "%s was unable to determine the absolute path for its command\n", prrte_tool_basename);
+                exit(1);
+            }
+            tpath = prrte_dirname(param);
+            free(param);
+            param = NULL;
+        }
+
+        if( NULL != tpath ) {
+            /* Quick sanity check to ensure we got
+               something/bin/<exec_name> and that the installation
+               tree is at least more or less what we expect it to
+               be */
+            tmp_basename = prrte_basename(tpath);
+            if (0 == strcmp("bin", tmp_basename)) {
+                char* tmp = tpath;
+                tpath = prrte_dirname(tmp);
+                free(tmp);
+            } else {
+                free(tpath);
+                tpath = NULL;
+            }
+            free(tmp_basename);
+        }
+
+        /* see if they told us a prefix to use */
+        if (prrte_cmd_line_is_taken(prrte_cmd_line, "prefix") &&
+            NULL != tpath) {
+            /* if they don't match, then that merits a warning */
+            pval = prrte_cmd_line_get_param(prrte_cmd_line, "prefix", 0, 0);
+            param = strdup(pval->data.string);
+            /* ensure we strip any trailing '/' */
+            if (0 == strcmp(PRRTE_PATH_SEP, &(param[strlen(param)-1]))) {
+                param[strlen(param)-1] = '\0';
+            }
+            tmp_basename = strdup(tpath);
+            if (0 == strcmp(PRRTE_PATH_SEP, &(tmp_basename[strlen(tmp_basename)-1]))) {
+                tmp_basename[strlen(tmp_basename)-1] = '\0';
+            }
+            if (0 != strcmp(param, tmp_basename)) {
+                prrte_show_help("help-prun.txt", "prun:double-prefix",
+                                true, prrte_tool_basename, prrte_tool_basename,
+                                param, tmp_basename, prrte_tool_basename);
+            }
+            /* use the prefix over the path-to-argv[0] so that
+             * people can specify the backend prefix as different
+             * from the local one
+             */
+            free(tpath);
+            tpath = NULL;
+            free(tmp_basename);
+        } else if (NULL != tpath) {
+            param = strdup(tpath);
+            free(tpath);
+        } else if (prrte_cmd_line_is_taken(prrte_cmd_line, "prefix")){
+            /* must be --prefix alone */
+            pval = prrte_cmd_line_get_param(prrte_cmd_line, "prefix", 0, 0);
+            param = strdup(pval->data.string);
+        } else if (want_prefix_by_default) {
+            /* --enable-prrte-prefix-default was given to prun */
+            param = strdup(prrte_install_dirs.prefix);
+        }
+
+        if (NULL != param) {
+            size_t param_len;
+            /* "Parse" the param, aka remove superfluous path_sep. */
+            param_len = strlen(param);
+            while (0 == strcmp (PRRTE_PATH_SEP, &(param[param_len-1]))) {
+                param[param_len-1] = '\0';
+                param_len--;
+                if (0 == param_len) {
+                    prrte_show_help("help-prun.txt", "prun:empty-prefix",
+                                    true, prrte_tool_basename, prrte_tool_basename);
+                    free(param);
+                    return PRRTE_ERR_FATAL;
+                }
+            }
+            prrte_asprintf(&tpath, "%s/bin/prte", param);
+            prrte_argv_append_nosize(&prteargs, tpath);
+            free(param);
+            free(tpath);
+        }
     }
 
     if (!prrte_cmd_line_is_taken(prrte_cmd_line, "terminate")) {
@@ -770,6 +857,9 @@ int prun(int argc, char *argv[])
             prrte_argv_append_nosize(&prteargs, "&");
             prrte_schizo.wrap_args(prteargs);
             param = prrte_argv_join(prteargs, ' ');
+            if (verbose) {
+                fprintf(stderr, "PRTE cmd line: %s\n", param);
+            }
             fp = popen(param, "r");
             if (NULL == fp) {
                 fprintf(stderr, "Error executing prte\n");
@@ -926,7 +1016,9 @@ int prun(int argc, char *argv[])
      * reach a "safe" place where the termination event can
      * be created
      */
-    pipe(term_pipe);
+    if (0 != (rc = pipe(term_pipe))) {
+        exit(1);
+    }
     /* setup an event to attempt normal termination on signal */
     myevbase = prrte_progress_thread_init(NULL);
     prrte_event_set(myevbase, &term_handler, term_pipe[0], PRRTE_EV_READ, clean_abort, NULL);
@@ -949,9 +1041,8 @@ int prun(int argc, char *argv[])
     /* now initialize PMIx - we have to indicate we are a launcher so that we
      * will provide rendezvous points for tools to connect to us */
     if (PMIX_SUCCESS != (ret = PMIx_tool_init(&myproc, iptr, ninfo))) {
-        PRRTE_ERROR_LOG(ret);
-        prrte_progress_thread_finalize(NULL);
-        return ret;
+        fprintf(stderr, "%s failed to initialize, likely due to no DVM being available\n", prrte_tool_basename);
+        exit(1);
     }
     PMIX_INFO_FREE(iptr, ninfo);
 
@@ -1062,7 +1153,9 @@ int prun(int argc, char *argv[])
          * the user will have seen */
         if (!prrte_path_is_absolute(param)) {
             char cwd[PRRTE_PATH_MAX];
-            getcwd(cwd, sizeof(cwd));
+            if (NULL == getcwd(cwd, sizeof(cwd))) {
+                return PRRTE_ERR_FATAL;
+            }
             ptr = prrte_os_path(false, cwd, param, NULL);
         } else {
             ptr = strdup(param);
@@ -1071,6 +1164,7 @@ int prun(int argc, char *argv[])
         free(ptr);
         prrte_list_append(&job_info, &ds->super);
     } else if (NULL != ptr) {
+#if PMIX_NUMERIC_VERSION >= 0x00040000
         /* if we were asked to output to a directory, pass it along. */
         ds = PRRTE_NEW(prrte_ds_info_t);
         PMIX_INFO_CREATE(ds->info, 1);
@@ -1080,13 +1174,16 @@ int prun(int argc, char *argv[])
          * the user will have seen */
         if (!prrte_path_is_absolute(ptr)) {
             char cwd[PRRTE_PATH_MAX];
-            getcwd(cwd, sizeof(cwd));
+            if (NULL == getcwd(cwd, sizeof(cwd))) {
+                return PRRTE_ERR_FATAL;
+            }
             param = prrte_os_path(false, cwd, ptr, NULL);
         } else {
             param = strdup(ptr);
         }
         PMIX_INFO_LOAD(ds->info, PRRTE_JOB_OUTPUT_TO_DIRECTORY, param, PMIX_STRING);
         free(param);
+#endif
     }
     /* if we were asked to merge stderr to stdout, mark it so */
     if (prrte_cmd_line_is_taken(prrte_cmd_line, "merge-stderr-to-stdout")) {
@@ -1171,6 +1268,15 @@ int prun(int argc, char *argv[])
         PMIX_INFO_CREATE(ds->info, 1);
         flag = true;
         PMIX_INFO_LOAD(ds->info, PMIX_JOB_CONTINUOUS, &flag, PMIX_BOOL);
+        prrte_list_append(&job_info, &ds->super);
+    }
+
+    /* if stop-on-exec was specified */
+    if (prrte_cmd_line_is_taken(prrte_cmd_line, "stop-on-exec")) {
+        ds = PRRTE_NEW(prrte_ds_info_t);
+        PMIX_INFO_CREATE(ds->info, 1);
+        flag = true;
+        PMIX_INFO_LOAD(ds->info, PMIX_DEBUG_STOP_ON_EXEC, &flag, PMIX_BOOL);
         prrte_list_append(&job_info, &ds->super);
     }
 
@@ -1313,10 +1419,22 @@ int prun(int argc, char *argv[])
                 ++m;
             }
         }
+        /* pickup any relevant envars */
+        prrte_schizo.parse_env(prrte_cmd_line, environ, &papps[n].env, false);
         ++n;
     }
 
+    if (verbose) {
+        prrte_output(0, "Calling PMIx_Spawn");
+    }
+
     ret = PMIx_Spawn(iptr, ninfo, papps, napps, nspace);
+    if (PRRTE_SUCCESS != ret) {
+        prrte_output(0, "PMIx_Spawn failed (%d): %s", ret, PMIx_Error_string(ret));
+        rc = ret;
+        goto DONE;
+    }
+
     PRRTE_PMIX_CONVERT_NSPACE(rc, &myjobid, nspace);
 
 #if PMIX_NUMERIC_VERSION >= 0x00040000
@@ -1380,7 +1498,6 @@ int prun(int argc, char *argv[])
     if (NULL != rellock.msg) {
         fprintf(stderr, "%s\n", rellock.msg);
     }
-    PRRTE_PMIX_DESTRUCT_LOCK(&rellock);
 
     /* if we lost connection to the server, then we are done */
     if (PMIX_ERR_LOST_CONNECTION_TO_SERVER == rc ||
@@ -1393,6 +1510,7 @@ int prun(int argc, char *argv[])
     PMIx_Deregister_event_handler(evid, opcbfunc, &lock);
     PRRTE_PMIX_WAIT_THREAD(&lock);
     PRRTE_PMIX_DESTRUCT_LOCK(&lock);
+    PRRTE_PMIX_DESTRUCT_LOCK(&rellock);
 
 #if PMIX_NUMERIC_VERSION >= 0x00040000
     /* close the push of our stdin */
@@ -1424,20 +1542,25 @@ int prun(int argc, char *argv[])
         flag = true;
         PMIX_INFO_LOAD(&info, PMIX_JOB_CTRL_TERMINATE, &flag, PMIX_BOOL);
         PRRTE_PMIX_CONSTRUCT_LOCK(&lock);
-        PMIx_Job_control_nb(NULL, 0, &info, 1, infocb, (void*)&lock);
+        rc = PMIx_Job_control_nb(NULL, 0, &info, 1, infocb, (void*)&lock);
+        if (PMIX_SUCCESS == rc) {
 #if PMIX_VERSION_MAJOR == 3 && PMIX_VERSION_MINOR == 0 && PMIX_VERSION_RELEASE < 3
-        /* There is a bug in PMIx 3.0.0 up to 3.0.2 that causes the callback never
-         * being called when the server successes. The callback might be eventually
-         * called though then the connection to the server closes with
-         * status PMIX_ERR_COMM_FAILURE */
-        poll(NULL, 0, 1000);
-        infocb(PMIX_SUCCESS, NULL, 0, (void *)&lock, NULL, NULL);
+            /* There is a bug in PMIx 3.0.0 up to 3.0.2 that causes the callback never
+             * being called when the server successes. The callback might be eventually
+             * called though then the connection to the server closes with
+             * status PMIX_ERR_COMM_FAILURE */
+            poll(NULL, 0, 1000);
+            infocb(PMIX_SUCCESS, NULL, 0, (void *)&lock, NULL, NULL);
 #endif
-        PRRTE_PMIX_WAIT_THREAD(&lock);
-        PRRTE_PMIX_DESTRUCT_LOCK(&lock);
-        /* wait for connection to depart */
-        PRRTE_PMIX_WAIT_THREAD(&rellock);
-        PRRTE_PMIX_DESTRUCT_LOCK(&rellock);
+            PRRTE_PMIX_WAIT_THREAD(&lock);
+            PRRTE_PMIX_DESTRUCT_LOCK(&lock);
+            /* wait for connection to depart */
+            PRRTE_PMIX_WAIT_THREAD(&rellock);
+            PRRTE_PMIX_DESTRUCT_LOCK(&rellock);
+        } else {
+            PRRTE_PMIX_DESTRUCT_LOCK(&lock);
+            PRRTE_PMIX_DESTRUCT_LOCK(&rellock);
+        }
     }
 
     /* cleanup and leave */
@@ -1524,7 +1647,7 @@ static int parse_locals(prrte_list_t *jdata, int argc, char* argv[])
  * This function takes a "char ***app_env" parameter to handle the
  * specific case:
  *
- *   prrterun --mca foo bar -app appfile
+ *   prun --mca foo bar -app appfile
  *
  * That is, we'll need to keep foo=bar, but the presence of the app
  * file will cause an invocation of parse_appfile(), which will cause
@@ -1535,7 +1658,7 @@ static int parse_locals(prrte_list_t *jdata, int argc, char* argv[])
  *
  * This is really just a special case -- when we have a simple case like:
  *
- *   prrterun --mca foo bar -np 4 hostname
+ *   prun --mca foo bar -np 4 hostname
  *
  * Then the upper-level function (parse_locals()) calls create_app()
  * with a NULL value for app_env, meaning that there is no "base"
@@ -1574,95 +1697,13 @@ static int create_app(int argc, char* argv[],
 
     /* See if we have anything left */
     if (0 == count) {
-        prrte_show_help("help-prrterun.txt", "prrterun:executable-not-specified",
+        prrte_show_help("help-prun.txt", "prun:executable-not-specified",
                        true, "prun", "prun");
         rc = PRRTE_ERR_NOT_FOUND;
         goto cleanup;
     }
 
-    /* set necessary env variables for external usage from tune conf file */
-    int set_from_file = 0;
-    char **vars = NULL;
-    if (PRRTE_SUCCESS == prrte_mca_base_var_process_env_list_from_file(&vars) &&
-            NULL != vars) {
-        for (i=0; NULL != vars[i]; i++) {
-            value = strchr(vars[i], '=');
-            /* terminate the name of the param */
-            *value = '\0';
-            /* step over the equals */
-            value++;
-            /* overwrite any prior entry */
-            prrte_setenv(vars[i], value, true, &app->app.env);
-            /* save it for any comm_spawn'd apps */
-            prrte_setenv(vars[i], value, true, &prrte_forwarded_envars);
-        }
-        set_from_file = 1;
-        prrte_argv_free(vars);
-    }
-    /* Did the user request to export any environment variables on the cmd line? */
-    char *env_set_flag;
-    env_set_flag = getenv("PRRTE_MCA_mca_base_env_list");
-    if (prrte_cmd_line_is_taken(prrte_cmd_line, "x")) {
-        if (NULL != env_set_flag) {
-            prrte_show_help("help-prrterun.txt", "prrterun:conflict-env-set", false);
-            return PRRTE_ERR_FATAL;
-        }
-        j = prrte_cmd_line_get_ninsts(prrte_cmd_line, "x");
-        for (i = 0; i < j; ++i) {
-            pvalue = prrte_cmd_line_get_param(prrte_cmd_line, "x", i, 0);
-            param = pvalue->data.string;
-
-            if (NULL != (value = strchr(param, '='))) {
-                /* terminate the name of the param */
-                *value = '\0';
-                /* step over the equals */
-                value++;
-                /* overwrite any prior entry */
-                prrte_setenv(param, value, true, &app->app.env);
-                /* save it for any comm_spawn'd apps */
-                prrte_setenv(param, value, true, &prrte_forwarded_envars);
-            } else {
-                value = getenv(param);
-                if (NULL != value) {
-                    /* overwrite any prior entry */
-                    prrte_setenv(param, value, true, &app->app.env);
-                    /* save it for any comm_spawn'd apps */
-                    prrte_setenv(param, value, true, &prrte_forwarded_envars);
-                } else {
-                    prrte_output(0, "Warning: could not find environment variable \"%s\"\n", param);
-                }
-            }
-        }
-    } else if (NULL != env_set_flag) {
-        /* if mca_base_env_list was set, check if some of env vars were set via -x from a conf file.
-         * If this is the case, error out.
-         */
-        if (!set_from_file) {
-            /* set necessary env variables for external usage */
-            vars = NULL;
-            if (PRRTE_SUCCESS == prrte_mca_base_var_process_env_list(env_set_flag, &vars) &&
-                    NULL != vars) {
-                for (i=0; NULL != vars[i]; i++) {
-                    value = strchr(vars[i], '=');
-                    /* terminate the name of the param */
-                    *value = '\0';
-                    /* step over the equals */
-                    value++;
-                    /* overwrite any prior entry */
-                    prrte_setenv(vars[i], value, true, &app->app.env);
-                    /* save it for any comm_spawn'd apps */
-                    prrte_setenv(vars[i], value, true, &prrte_forwarded_envars);
-                }
-                prrte_argv_free(vars);
-            }
-        } else {
-            prrte_show_help("help-prrterun.txt", "prrterun:conflict-env-set", false);
-            return PRRTE_ERR_FATAL;
-        }
-    }
-
     /* Did the user request a specific wdir? */
-
     if (NULL != (pvalue = prrte_cmd_line_get_param(prrte_cmd_line, "wdir", 0, 0))) {
         param = pvalue->data.string;
         /* if this is a relative path, convert it to an absolute path */
@@ -1671,7 +1712,7 @@ static int create_app(int argc, char* argv[],
         } else {
             /* get the cwd */
             if (PRRTE_SUCCESS != (rc = prrte_getcwd(cwd, sizeof(cwd)))) {
-                prrte_show_help("help-prrterun.txt", "prrterun:init-failure",
+                prrte_show_help("help-prun.txt", "prun:init-failure",
                                true, "get the cwd", rc);
                 goto cleanup;
             }
@@ -1685,7 +1726,7 @@ static int create_app(int argc, char* argv[],
         prrte_list_append(&app->info, &val->super);
     } else {
         if (PRRTE_SUCCESS != (rc = prrte_getcwd(cwd, sizeof(cwd)))) {
-            prrte_show_help("help-prrterun.txt", "prrterun:init-failure",
+            prrte_show_help("help-prun.txt", "prun:init-failure",
                            true, "get the cwd", rc);
             goto cleanup;
         }
@@ -1709,7 +1750,7 @@ static int create_app(int argc, char* argv[],
     found = false;
     if (0 < (j = prrte_cmd_line_get_ninsts(prrte_cmd_line, "hostfile"))) {
         if (1 < j) {
-            prrte_show_help("help-prrterun.txt", "prrterun:multiple-hostfiles",
+            prrte_show_help("help-prun.txt", "prun:multiple-hostfiles",
                            true, "prun", NULL);
             return PRRTE_ERR_FATAL;
         } else {
@@ -1723,7 +1764,7 @@ static int create_app(int argc, char* argv[],
     }
     if (0 < (j = prrte_cmd_line_get_ninsts(prrte_cmd_line, "machinefile"))) {
         if (1 < j || found) {
-            prrte_show_help("help-prrterun.txt", "prrterun:multiple-hostfiles",
+            prrte_show_help("help-prun.txt", "prun:multiple-hostfiles",
                            true, "prun", NULL);
             return PRRTE_ERR_FATAL;
         } else {
@@ -1754,18 +1795,18 @@ static int create_app(int argc, char* argv[],
     if (NULL != (pvalue = prrte_cmd_line_get_param(prrte_cmd_line, "np", 0, 0)) ||
         NULL != (pvalue = prrte_cmd_line_get_param(prrte_cmd_line, "n", 0, 0))) {
         if (0 > pvalue->data.integer) {
-            prrte_show_help("help-prrterun.txt", "prrterun:negative-nprocs",
+            prrte_show_help("help-prun.txt", "prun:negative-nprocs",
                            true, "prun", app->app.argv[0],
                            pvalue->data.integer, NULL);
             return PRRTE_ERR_FATAL;
         }
     }
-    if (NULL == pvalue) {
-        prrte_output(0, "NO NP");
-        return PRRTE_ERR_FATAL;
+    if (NULL != pvalue) {
+        /* we don't require that the user provide --np or -n because
+         * the cmd line might stipulate a mapping policy that computes
+         * the number of procs - e.g., a map-by ppr option */
+        app->app.maxprocs = pvalue->data.integer;
     }
-
-    app->app.maxprocs = pvalue->data.integer;
 
     /* see if we need to preload the binary to
      * find the app - don't do this for java apps, however, as we
@@ -1793,12 +1834,12 @@ static int create_app(int argc, char* argv[],
 
     /* Do not try to find argv[0] here -- the starter is responsible
        for that because it may not be relevant to try to find it on
-       the node where prrterun is executing.  So just strdup() argv[0]
+       the node where prun is executing.  So just strdup() argv[0]
        into app. */
 
     app->app.cmd = strdup(app->app.argv[0]);
     if (NULL == app->app.cmd) {
-        prrte_show_help("help-prrterun.txt", "prrterun:call-failed",
+        prrte_show_help("help-prun.txt", "prun:call-failed",
                        true, "prun", "library", "strdup returned NULL", errno);
         rc = PRRTE_ERR_NOT_FOUND;
         goto cleanup;
@@ -2021,10 +2062,14 @@ static void abort_signal_callback(int fd)
         if ((current.tv_sec - last.tv_sec) < 5) {
             exit(1);
         }
-        write(1, (void*)msg, strlen(msg));
+        if (-1 == write(1, (void*)msg, strlen(msg))) {
+            exit(1);
+        }
     }
     /* save the time */
     last.tv_sec = current.tv_sec;
     /* tell the event lib to attempt to abnormally terminate */
-    write(term_pipe[1], &foo, 1);
+    if (-1 == write(term_pipe[1], &foo, 1)) {
+        exit(1);
+    }
 }

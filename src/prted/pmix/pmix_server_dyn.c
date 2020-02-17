@@ -13,7 +13,7 @@
  *                         All rights reserved.
  * Copyright (c) 2009-2017 Cisco Systems, Inc.  All rights reserved
  * Copyright (c) 2011      Oak Ridge National Labs.  All rights reserved.
- * Copyright (c) 2013-2019 Intel, Inc.  All rights reserved.
+ * Copyright (c) 2013-2020 Intel, Inc.  All rights reserved.
  * Copyright (c) 2014      Mellanox Technologies, Inc.
  *                         All rights reserved.
  * Copyright (c) 2014-2019 Research Organization for Information Science
@@ -64,26 +64,28 @@ void pmix_server_launch_resp(int status, prrte_process_name_t* sender,
     prrte_job_t *jdata;
     char nspace[PMIX_MAX_NSLEN+1];
     pmix_proc_t proc;
-    pmix_status_t xrc;
 
-    /* unpack the status */
+    /* unpack the status - this is already a PMIx value */
     cnt = 1;
     if (PRRTE_SUCCESS != (rc = prrte_dss.unpack(buffer, &ret, &cnt, PRRTE_INT32))) {
         PRRTE_ERROR_LOG(rc);
-        return;
+        ret = prrte_pmix_convert_rc(rc);
     }
 
     /* unpack the jobid */
     cnt = 1;
     if (PRRTE_SUCCESS != (rc = prrte_dss.unpack(buffer, &jobid, &cnt, PRRTE_JOBID))) {
         PRRTE_ERROR_LOG(rc);
-        return;
+        ret = prrte_pmix_convert_rc(rc);
     }
+    /* we let the above errors fall thru in the vain hope that the room number can
+     * be successfully unpacked, thus allowing us to respond to the requestor */
 
     /* unpack our tracking room number */
     cnt = 1;
     if (PRRTE_SUCCESS != (rc = prrte_dss.unpack(buffer, &room, &cnt, PRRTE_INT))) {
         PRRTE_ERROR_LOG(rc);
+        /* we are hosed */
         return;
     }
 
@@ -100,7 +102,6 @@ void pmix_server_launch_resp(int status, prrte_process_name_t* sender,
         PRRTE_PMIX_CONVERT_JOBID(nspace, jobid);
         req->spcbfunc(ret, nspace, req->cbdata);
     } else if (NULL != req->toolcbfunc) {
-        xrc = prrte_pmix_convert_rc(ret);
         /* if success, then add to our job info */
         if (PRRTE_SUCCESS == ret) {
             jdata = PRRTE_NEW(prrte_job_t);
@@ -110,7 +111,7 @@ void pmix_server_launch_resp(int status, prrte_process_name_t* sender,
             prrte_pmix_server_tool_conn_complete(jdata, req);
             PRRTE_PMIX_CONVERT_NAME(&proc, &req->target);
         }
-        req->toolcbfunc(xrc, &proc, req->cbdata);
+        req->toolcbfunc(ret, &proc, req->cbdata);
     }
     /* cleanup */
     PRRTE_RELEASE(req);
@@ -123,10 +124,12 @@ static void spawn(int sd, short args, void *cbdata)
     prrte_buffer_t *buf;
     prrte_plm_cmd_flag_t command;
     char nspace[PMIX_MAX_NSLEN+1];
+    pmix_status_t prc;
 
     PRRTE_ACQUIRE_OBJECT(req);
 
     /* add this request to our tracker hotel */
+    PRRTE_ADJUST_TIMEOUT(req);
     if (PRRTE_SUCCESS != (rc = prrte_hotel_checkin(&prrte_pmix_server_globals.reqs, req, &req->room_num))) {
         prrte_show_help("help-orted.txt", "noroom", true, req->operation, prrte_pmix_server_globals.num_rooms);
         goto callback;
@@ -169,8 +172,9 @@ static void spawn(int sd, short args, void *cbdata)
   callback:
     /* this section gets executed solely upon an error */
     if (NULL != req->spcbfunc) {
+        prc = prrte_pmix_convert_rc(rc);
         PRRTE_PMIX_CONVERT_JOBID(nspace, PRRTE_JOBID_INVALID);
-        req->spcbfunc(rc, nspace, req->cbdata);
+        req->spcbfunc(prc, nspace, req->cbdata);
     }
     PRRTE_RELEASE(req);
 }
@@ -454,9 +458,19 @@ static void interim(int sd, short args, void *cbdata)
 
         /***   STOP ON EXEC FOR DEBUGGER   ***/
         } else if (PMIX_CHECK_KEY(info, PMIX_DEBUG_STOP_ON_EXEC)) {
-            /* we don't know how to do this */
+#if PRRTE_HAVE_STOP_ON_EXEC
+            flag = PMIX_INFO_TRUE(info);
+            prrte_set_attribute(&jdata->attributes, PRRTE_JOB_STOP_ON_EXEC,
+                               PRRTE_ATTR_GLOBAL, &flag, PRRTE_BOOL);
+#else
+            /* we cannot support the request */
             rc = PRRTE_ERR_NOT_SUPPORTED;
             goto complete;
+#endif
+
+        /***   STOP IN INIT  AND WAIT AT SOME PROGRAMMATIC POINT FOR DEBUGGER   ***/
+        /***   ALLOW TO FALL INTO THE JOB-LEVEL CACHE AS THEY ARE INCLUDED IN   ***/
+        /***   THE INITIAL JOB-INFO DELIVERED TO PROCS                          ***/
 
         /***   TAG STDOUT   ***/
         } else if (PMIX_CHECK_KEY(info, PMIX_TAG_OUTPUT)) {
@@ -572,8 +586,12 @@ static void interim(int sd, short args, void *cbdata)
   complete:
     if (NULL != cd->spcbfunc) {
         pmix_proc_t pproc;
+        pmix_status_t prc;
+        pmix_nspace_t nspace;
         PRRTE_PMIX_CONVERT_JOBID(pproc.nspace, PRRTE_JOBID_INVALID);
-        cd->spcbfunc(rc, pproc.nspace, cd->cbdata);
+        PMIX_LOAD_NSPACE(nspace, NULL);
+        prc = prrte_pmix_convert_rc(rc);
+        cd->spcbfunc(prc, nspace, cd->cbdata);
     }
     PRRTE_RELEASE(cd);
 }

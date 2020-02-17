@@ -14,7 +14,7 @@
  *                         reserved.
  * Copyright (c) 2007-2012 Cisco Systems, Inc.  All rights reserved.
  * Copyright (c) 2007-2008 Sun Microsystems, Inc.  All rights reserved.
- * Copyright (c) 2014-2019 Intel, Inc.  All rights reserved.
+ * Copyright (c) 2014-2020 Intel, Inc.  All rights reserved.
  * Copyright (c) 2014-2016 Research Organization for Information Science
  *                         and Technology (RIST). All rights reserved.
  *
@@ -210,7 +210,7 @@ int prrte_init_util(void)
     }
     /* add network aliases to our list of alias hostnames */
     prrte_ifgetaliases(&prrte_process_info.aliases);
-    
+
     /* open hwloc */
     prrte_hwloc_base_open();
 

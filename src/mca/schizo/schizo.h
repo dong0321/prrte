@@ -11,7 +11,7 @@
  */
 /** @file:
  *
- * The Open RTE Personality Framework (schizo)
+ * The PRRTE Personality Framework (schizo)
  *
  * Multi-select framework so that multiple personalities can be
  * simultaneously supported
@@ -73,10 +73,10 @@ typedef void (*prrte_schizo_base_module_parse_proxy_cli_fn_t)(prrte_cmd_line_t *
 /* parse the environment of the
  * tool to extract any personality-specific envars that need to be
  * forward to the app's environment upon execution */
-typedef int (*prrte_schizo_base_module_parse_env_fn_t)(char *path,
-                                                      prrte_cmd_line_t *cmd_line,
-                                                      char **srcenv,
-                                                      char ***dstenv);
+typedef int (*prrte_schizo_base_module_parse_env_fn_t)(prrte_cmd_line_t *cmd_line,
+                                                       char **srcenv,
+                                                       char ***dstenv,
+                                                       bool cmdline);
 
 /* check if running as root is allowed in this environment */
 typedef int (*prrte_schizo_base_module_allow_run_as_root_fn_t)(prrte_cmd_line_t *cmd_line);
@@ -86,7 +86,7 @@ typedef void (*prrte_schizo_base_module_wrap_args_fn_t)(char **args);
 
 /* do whatever preparation work
  * is required to setup the app for execution. This is intended to be
- * used by prrterun and other launcher tools to, for example, change
+ * used by prun and other launcher tools to, for example, change
  * an executable's relative-path to an absolute-path, or add a command
  * required for starting a particular kind of application (e.g., adding
  * "java" to start a Java application) */

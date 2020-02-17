@@ -14,7 +14,7 @@
  *                         reserved.
  * Copyright (c) 2009      Sun Microsystems, Inc. All rights reserved.
  * Copyright (c) 2010-2011 Oak Ridge National Labs.  All rights reserved.
- * Copyright (c) 2014-2019 Intel, Inc.  All rights reserved.
+ * Copyright (c) 2014-2020 Intel, Inc.  All rights reserved.
  * Copyright (c) 2016-2019 Research Organization for Information Science
  *                         and Technology (RIST). All rights reserved.
  * $COPYRIGHT$
@@ -49,11 +49,13 @@
 #include "src/mca/base/base.h"
 #include "src/mca/pstat/pstat.h"
 #include "src/util/output.h"
+#include "src/util/os_dirpath.h"
 #include "src/util/prrte_environ.h"
 #include "src/util/path.h"
 #include "src/dss/dss.h"
 #include "src/pmix/pmix-internal.h"
 #include "src/mca/compress/compress.h"
+#include "src/prted/pmix/pmix_server.h"
 
 #include "src/util/proc_info.h"
 #include "src/util/session_dir.h"
@@ -612,6 +614,17 @@ void prrte_daemon_recv(int status, prrte_process_name_t* sender,
         PRRTE_PMIX_WAIT_THREAD(&lk);
         PRRTE_PMIX_DESTRUCT_LOCK(&lk);
 
+        /* cleanup any pending server ops */
+        pname.rank = PMIX_RANK_WILDCARD;
+        prrte_pmix_server_clear(&pname);
+        /* remove the session directory tree */
+        if (0 > prrte_asprintf(&cmd_str, "%s/%d", prrte_process_info.jobfam_session_dir, PRRTE_LOCAL_JOBID(jdata->jobid))) {
+            ret = PRRTE_ERR_OUT_OF_RESOURCE;
+            goto CLEANUP;
+        }
+        prrte_os_dirpath_destroy(cmd_str, true, NULL);
+        free(cmd_str);
+        cmd_str = NULL;
         PRRTE_RELEASE(jdata);
         break;
 

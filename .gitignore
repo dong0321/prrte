@@ -121,6 +121,8 @@ examples/debugger/daemon
 examples/debugger/hello
 
 test/double-get
+test/get-nofence
+test/ptrace_spawn_stopped
 
 src/sys/powerpc/atomic-32.s
 src/sys/powerpc/atomic-64.s
@@ -283,6 +285,8 @@ src/tools/prte/prte.1
 src/tools/pcc/pcc
 src/tools/pcc/pcc.1
 src/tools/pcc/pcc-wrapper-data.txt
+src/tools/pterm/pterm
+src/tools/pterm/pterm.1
 
 src/util/hostfile/hostfile_lex.c
 src/util/keyval/keyval_lex.c

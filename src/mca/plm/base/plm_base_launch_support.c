@@ -16,7 +16,7 @@
  * Copyright (c) 2013-2020 Intel, Inc.  All rights reserved.
  * Copyright (c) 2014-2019 Research Organization for Information Science
  *                         and Technology (RIST).  All rights reserved.
- * Copyright (c) 2016      IBM Corporation.  All rights reserved.
+ * Copyright (c) 2016-2020 IBM Corporation.  All rights reserved.
  * $COPYRIGHT$
  *
  * Additional copyrights may follow
@@ -587,15 +587,64 @@ void prrte_plm_base_send_launch_msg(int fd, short args, void *cbdata)
     PRRTE_RELEASE(caddy);
 }
 
+int prrte_plm_base_spawn_reponse(int32_t status, prrte_job_t *jdata)
+{
+    int ret;
+    prrte_buffer_t *answer;
+    int room, *rmptr;
+
+    /* if the response has already been sent, don't do it again */
+    if (prrte_get_attribute(&jdata->attributes, PRRTE_JOB_SPAWN_NOTIFIED, NULL, PRRTE_BOOL)) {
+        return PRRTE_SUCCESS;
+    }
+
+    /* prep the response to the spawn requestor */
+    answer = PRRTE_NEW(prrte_buffer_t);
+    /* pack the status */
+    if (PRRTE_SUCCESS != (ret = prrte_dss.pack(answer, &status, 1, PRRTE_INT32))) {
+        PRRTE_ERROR_LOG(ret);
+        PRRTE_RELEASE(answer);
+        return ret;
+    }
+    /* pack the jobid */
+    if (PRRTE_SUCCESS != (ret = prrte_dss.pack(answer, &jdata->jobid, 1, PRRTE_JOBID))) {
+        PRRTE_ERROR_LOG(ret);
+        PRRTE_RELEASE(answer);
+        return ret;
+    }
+    /* pack the room number */
+    rmptr = &room;
+    if (prrte_get_attribute(&jdata->attributes, PRRTE_JOB_ROOM_NUM, (void**)&rmptr, PRRTE_INT)) {
+        if (PRRTE_SUCCESS != (ret = prrte_dss.pack(answer, &room, 1, PRRTE_INT))) {
+            PRRTE_ERROR_LOG(ret);
+            PRRTE_RELEASE(answer);
+            return ret;
+        }
+    }
+    PRRTE_OUTPUT_VERBOSE((5, prrte_plm_base_framework.framework_output,
+                         "%s plm:base:launch sending dyn release of job %s to %s",
+                         PRRTE_NAME_PRINT(PRRTE_PROC_MY_NAME),
+                         PRRTE_JOBID_PRINT(jdata->jobid),
+                         PRRTE_NAME_PRINT(&jdata->originator)));
+    if (0 > (ret = prrte_rml.send_buffer_nb(&jdata->originator, answer,
+                                           PRRTE_RML_TAG_LAUNCH_RESP,
+                                           prrte_rml_send_callback, NULL))) {
+        PRRTE_ERROR_LOG(ret);
+        PRRTE_RELEASE(answer);
+        return ret;
+    }
+
+    /* mark that we sent it */
+    prrte_set_attribute(&jdata->attributes, PRRTE_JOB_SPAWN_NOTIFIED, PRRTE_ATTR_LOCAL, NULL, PRRTE_BOOL);
+    return PRRTE_SUCCESS;
+}
+
 void prrte_plm_base_post_launch(int fd, short args, void *cbdata)
 {
     int32_t rc;
     prrte_job_t *jdata;
     prrte_state_caddy_t *caddy = (prrte_state_caddy_t*)cbdata;
     prrte_timer_t *timer=NULL;
-    int ret;
-    prrte_buffer_t *answer;
-    int room, *rmptr;
 
     PRRTE_ACQUIRE_OBJECT(caddy);
 
@@ -614,65 +663,19 @@ void prrte_plm_base_post_launch(int fd, short args, void *cbdata)
     }
 
     if (PRRTE_JOB_STATE_RUNNING != caddy->job_state) {
-        PRRTE_FORCED_TERMINATE(PRRTE_ERROR_DEFAULT_EXIT_CODE);
+        /* error mgr handles this */
         PRRTE_RELEASE(caddy);
         return;
     }
     /* update job state */
     caddy->jdata->state = caddy->job_state;
 
-    /* if this isn't a dynamic spawn, just cleanup */
-    if (PRRTE_JOBID_INVALID == jdata->originator.jobid) {
-        PRRTE_OUTPUT_VERBOSE((5, prrte_plm_base_framework.framework_output,
-                             "%s plm:base:launch job %s is not a dynamic spawn",
-                             PRRTE_NAME_PRINT(PRRTE_PROC_MY_NAME),
-                             PRRTE_JOBID_PRINT(jdata->jobid)));
-        goto cleanup;
+    /* notify the spawn requestor */
+    rc = prrte_plm_base_spawn_reponse(PRRTE_SUCCESS, jdata);
+    if (PRRTE_SUCCESS != rc) {
+        PRRTE_ERROR_LOG(rc);
     }
 
-    /* prep the response */
-    rc = PRRTE_SUCCESS;
-    answer = PRRTE_NEW(prrte_buffer_t);
-    /* pack the status */
-    if (PRRTE_SUCCESS != (ret = prrte_dss.pack(answer, &rc, 1, PRRTE_INT32))) {
-        PRRTE_ERROR_LOG(ret);
-        PRRTE_FORCED_TERMINATE(PRRTE_ERROR_DEFAULT_EXIT_CODE);
-        PRRTE_RELEASE(caddy);
-        return;
-    }
-    /* pack the jobid */
-    if (PRRTE_SUCCESS != (ret = prrte_dss.pack(answer, &jdata->jobid, 1, PRRTE_JOBID))) {
-        PRRTE_ERROR_LOG(ret);
-        PRRTE_FORCED_TERMINATE(PRRTE_ERROR_DEFAULT_EXIT_CODE);
-        PRRTE_RELEASE(caddy);
-        return;
-    }
-    /* pack the room number */
-    rmptr = &room;
-    if (prrte_get_attribute(&jdata->attributes, PRRTE_JOB_ROOM_NUM, (void**)&rmptr, PRRTE_INT)) {
-        if (PRRTE_SUCCESS != (ret = prrte_dss.pack(answer, &room, 1, PRRTE_INT))) {
-            PRRTE_ERROR_LOG(ret);
-            PRRTE_FORCED_TERMINATE(PRRTE_ERROR_DEFAULT_EXIT_CODE);
-            PRRTE_RELEASE(caddy);
-            return;
-        }
-    }
-    PRRTE_OUTPUT_VERBOSE((5, prrte_plm_base_framework.framework_output,
-                         "%s plm:base:launch sending dyn release of job %s to %s",
-                         PRRTE_NAME_PRINT(PRRTE_PROC_MY_NAME),
-                         PRRTE_JOBID_PRINT(jdata->jobid),
-                         PRRTE_NAME_PRINT(&jdata->originator)));
-    if (0 > (ret = prrte_rml.send_buffer_nb(&jdata->originator, answer,
-                                           PRRTE_RML_TAG_LAUNCH_RESP,
-                                           prrte_rml_send_callback, NULL))) {
-        PRRTE_ERROR_LOG(ret);
-        PRRTE_RELEASE(answer);
-        PRRTE_FORCED_TERMINATE(PRRTE_ERROR_DEFAULT_EXIT_CODE);
-        PRRTE_RELEASE(caddy);
-        return;
-    }
-
-  cleanup:
     /* cleanup */
     PRRTE_RELEASE(caddy);
 }
@@ -954,6 +957,8 @@ void prrte_plm_base_daemon_callback(int status, prrte_process_name_t* sender,
     prrte_daemon_cmd_flag_t cmd;
     char *myendian;
     pmix_proc_t pproc;
+    char *alias, **atmp=NULL;
+    uint8_t naliases, ni;
 
     /* get the daemon job, if necessary */
     if (NULL == jdatorted) {
@@ -1074,41 +1079,37 @@ void prrte_plm_base_daemon_callback(int status, prrte_process_name_t* sender,
         /* mark the daemon as launched */
         PRRTE_FLAG_SET(daemon->node, PRRTE_NODE_FLAG_DAEMON_LAUNCHED);
 
-        if (prrte_retain_aliases) {
-            char *alias, **atmp=NULL;
-            uint8_t naliases, ni;
-            /* first, store the nodename itself as an alias. We do
-             * this in case the nodename isn't the same as what we
-             * were given by the allocation. For example, a hostfile
-             * might contain an IP address instead of the value returned
-             * by gethostname, yet the daemon will have returned the latter
-             * and apps may refer to the host by that name
-             */
-            prrte_argv_append_nosize(&atmp, nodename);
-            /* unpack and store the provided aliases */
+        /* first, store the nodename itself as an alias. We do
+         * this in case the nodename isn't the same as what we
+         * were given by the allocation. For example, a hostfile
+         * might contain an IP address instead of the value returned
+         * by gethostname, yet the daemon will have returned the latter
+         * and apps may refer to the host by that name
+         */
+        prrte_argv_append_nosize(&atmp, nodename);
+        /* unpack and store the provided aliases */
+        idx = 1;
+        if (PRRTE_SUCCESS != (rc = prrte_dss.unpack(buffer, &naliases, &idx, PRRTE_UINT8))) {
+            PRRTE_ERROR_LOG(rc);
+            prted_failed_launch = true;
+            goto CLEANUP;
+        }
+        for (ni=0; ni < naliases; ni++) {
             idx = 1;
-            if (PRRTE_SUCCESS != (rc = prrte_dss.unpack(buffer, &naliases, &idx, PRRTE_UINT8))) {
+            if (PRRTE_SUCCESS != (rc = prrte_dss.unpack(buffer, &alias, &idx, PRRTE_STRING))) {
                 PRRTE_ERROR_LOG(rc);
                 prted_failed_launch = true;
                 goto CLEANUP;
             }
-            for (ni=0; ni < naliases; ni++) {
-                idx = 1;
-                if (PRRTE_SUCCESS != (rc = prrte_dss.unpack(buffer, &alias, &idx, PRRTE_STRING))) {
-                    PRRTE_ERROR_LOG(rc);
-                    prted_failed_launch = true;
-                    goto CLEANUP;
-                }
-                prrte_argv_append_nosize(&atmp, alias);
-                free(alias);
-            }
-            if (0 < naliases) {
-                alias = prrte_argv_join(atmp, ',');
-                prrte_set_attribute(&daemon->node->attributes, PRRTE_NODE_ALIAS, PRRTE_ATTR_LOCAL, alias, PRRTE_STRING);
-                free(alias);
-            }
-            prrte_argv_free(atmp);
+            prrte_argv_append_nosize(&atmp, alias);
+            free(alias);
         }
+        if (0 < naliases) {
+            alias = prrte_argv_join(atmp, ',');
+            prrte_set_attribute(&daemon->node->attributes, PRRTE_NODE_ALIAS, PRRTE_ATTR_LOCAL, alias, PRRTE_STRING);
+            free(alias);
+        }
+        prrte_argv_free(atmp);
 
         /* unpack the topology signature for that node */
         idx=1;
@@ -1444,9 +1445,6 @@ int prrte_plm_base_prted_append_basic_args(int *argc, char ***argv,
                                           int *proc_vpid_index)
 {
     char *param = NULL;
-    const char **tmp_value, **tmp_value2;
-    int loc_id;
-    char *tmp_force = NULL;
     int i, j, cnt, rc;
     prrte_job_t *jdata;
     unsigned long num_procs;
@@ -1454,39 +1452,39 @@ int prrte_plm_base_prted_append_basic_args(int *argc, char ***argv,
 
     /* check for debug flags */
     if (prrte_debug_flag) {
-        prrte_argv_append(argc, argv, "-"PRRTE_MCA_CMD_LINE_ID);
+        prrte_argv_append(argc, argv, "--prtemca");
         prrte_argv_append(argc, argv, "prrte_debug");
         prrte_argv_append(argc, argv, "1");
     }
     if (prrte_debug_daemons_flag) {
-        prrte_argv_append(argc, argv, "-"PRRTE_MCA_CMD_LINE_ID);
+        prrte_argv_append(argc, argv, "--prtemca");
         prrte_argv_append(argc, argv, "prrte_debug_daemons");
         prrte_argv_append(argc, argv, "1");
     }
     if (prrte_debug_daemons_file_flag) {
-        prrte_argv_append(argc, argv, "-"PRRTE_MCA_CMD_LINE_ID);
+        prrte_argv_append(argc, argv, "--prtemca");
         prrte_argv_append(argc, argv, "prrte_debug_daemons_file");
         prrte_argv_append(argc, argv, "1");
     }
     if (prrte_leave_session_attached) {
-        prrte_argv_append(argc, argv, "-"PRRTE_MCA_CMD_LINE_ID);
+        prrte_argv_append(argc, argv, "--prtemca");
         prrte_argv_append(argc, argv, "prrte_leave_session_attached");
         prrte_argv_append(argc, argv, "1");
     }
 
     if (prrte_hwloc_report_bindings) {
-        prrte_argv_append(argc, argv, "-"PRRTE_MCA_CMD_LINE_ID);
+        prrte_argv_append(argc, argv, "--prtemca");
         prrte_argv_append(argc, argv, "prrte_report_bindings");
         prrte_argv_append(argc, argv, "1");
     }
 
     if (prrte_map_stddiag_to_stderr) {
-        prrte_argv_append(argc, argv, "-"PRRTE_MCA_CMD_LINE_ID);
+        prrte_argv_append(argc, argv, "--prtemca");
         prrte_argv_append(argc, argv, "prrte_map_stddiag_to_stderr");
         prrte_argv_append(argc, argv, "1");
     }
     else if (prrte_map_stddiag_to_stdout) {
-        prrte_argv_append(argc, argv, "-"PRRTE_MCA_CMD_LINE_ID);
+        prrte_argv_append(argc, argv, "--prtemca");
         prrte_argv_append(argc, argv, "prrte_map_stddiag_to_stdout");
         prrte_argv_append(argc, argv, "1");
     }
@@ -1498,13 +1496,13 @@ int prrte_plm_base_prted_append_basic_args(int *argc, char ***argv,
 
     /* tell the orted what ESS component to use */
     if (NULL != ess) {
-        prrte_argv_append(argc, argv, "-"PRRTE_MCA_CMD_LINE_ID);
+        prrte_argv_append(argc, argv, "--prtemca");
         prrte_argv_append(argc, argv, "ess");
         prrte_argv_append(argc, argv, ess);
     }
 
     /* pass the daemon jobid */
-    prrte_argv_append(argc, argv, "-"PRRTE_MCA_CMD_LINE_ID);
+    prrte_argv_append(argc, argv, "--prtemca");
     prrte_argv_append(argc, argv, "ess_base_jobid");
     if (PRRTE_SUCCESS != (rc = prrte_util_convert_jobid_to_string(&param, PRRTE_PROC_MY_NAME->jobid))) {
         PRRTE_ERROR_LOG(rc);
@@ -1515,7 +1513,7 @@ int prrte_plm_base_prted_append_basic_args(int *argc, char ***argv,
 
     /* setup to pass the vpid */
     if (NULL != proc_vpid_index) {
-        prrte_argv_append(argc, argv, "-"PRRTE_MCA_CMD_LINE_ID);
+        prrte_argv_append(argc, argv, "--prtemca");
         prrte_argv_append(argc, argv, "ess_base_vpid");
         *proc_vpid_index = *argc;
         prrte_argv_append(argc, argv, "<template>");
@@ -1528,132 +1526,22 @@ int prrte_plm_base_prted_append_basic_args(int *argc, char ***argv,
     } else {
         num_procs = prrte_process_info.num_procs;
     }
-    prrte_argv_append(argc, argv, "-"PRRTE_MCA_CMD_LINE_ID);
+    prrte_argv_append(argc, argv, "--prtemca");
     prrte_argv_append(argc, argv, "ess_base_num_procs");
     prrte_asprintf(&param, "%lu", num_procs);
     prrte_argv_append(argc, argv, param);
     free(param);
 
     /* pass the HNP uri */
-    prrte_argv_append(argc, argv, "-"PRRTE_MCA_CMD_LINE_ID);
+    prrte_argv_append(argc, argv, "--prtemca");
     prrte_argv_append(argc, argv, "prrte_hnp_uri");
     prrte_argv_append(argc, argv, prrte_process_info.my_hnp_uri);
 
     /* if --xterm was specified, pass that along */
     if (NULL != prrte_xterm) {
-        prrte_argv_append(argc, argv, "-"PRRTE_MCA_CMD_LINE_ID);
+        prrte_argv_append(argc, argv, "--prtemca");
         prrte_argv_append(argc, argv, "prrte_xterm");
         prrte_argv_append(argc, argv, prrte_xterm);
-    }
-
-    loc_id = prrte_mca_base_var_find("prrte", "mca", "base", "param_files");
-    if (loc_id < 0) {
-        rc = PRRTE_ERR_NOT_FOUND;
-        PRRTE_ERROR_LOG(rc);
-        return rc;
-    }
-    tmp_value = NULL;
-    rc = prrte_mca_base_var_get_value(loc_id, &tmp_value, NULL, NULL);
-    if (PRRTE_SUCCESS != rc) {
-        PRRTE_ERROR_LOG(rc);
-        return rc;
-    }
-    if (NULL != tmp_value && NULL != tmp_value[0]) {
-        rc = strcmp(tmp_value[0], "none");
-    } else {
-        rc = 1;
-    }
-
-    if (0 != rc) {
-        /*
-         * Pass along the Aggregate MCA Parameter Sets
-         */
-        /* Add the 'prefix' param */
-        tmp_value = NULL;
-
-        loc_id = prrte_mca_base_var_find("prrte", "mca", "base", "envar_file_prefix");
-        if (loc_id < 0) {
-            rc = PRRTE_ERR_NOT_FOUND;
-            PRRTE_ERROR_LOG(rc);
-            return rc;
-        }
-        rc = prrte_mca_base_var_get_value(loc_id, &tmp_value, NULL, NULL);
-        if (PRRTE_SUCCESS != rc) {
-            PRRTE_ERROR_LOG(rc);
-            return rc;
-        }
-        if( NULL != tmp_value && NULL != tmp_value[0] ) {
-            /* Could also use the short version '-tune'
-             * but being verbose has some value
-             */
-            prrte_argv_append(argc, argv, "-mca");
-            prrte_argv_append(argc, argv, "mca_base_envar_file_prefix");
-            prrte_argv_append(argc, argv, tmp_value[0]);
-        }
-
-        tmp_value2 = NULL;
-        loc_id = prrte_mca_base_var_find("prrte", "mca", "base", "param_file_prefix");
-        prrte_mca_base_var_get_value(loc_id, &tmp_value2, NULL, NULL);
-        if( NULL != tmp_value2 && NULL != tmp_value2[0] ) {
-            /* Could also use the short version '-am'
-             * but being verbose has some value
-             */
-            prrte_argv_append(argc, argv, "-"PRRTE_MCA_CMD_LINE_ID);
-            prrte_argv_append(argc, argv, "mca_base_param_file_prefix");
-            prrte_argv_append(argc, argv, tmp_value2[0]);
-            prrte_show_help("help-plm-base.txt", "deprecated-amca", true);
-        }
-
-        if ((NULL != tmp_value && NULL != tmp_value[0])
-            || (NULL != tmp_value2 && NULL != tmp_value2[0])) {
-            /* Add the 'path' param */
-            tmp_value = NULL;
-            loc_id = prrte_mca_base_var_find("prrte", "mca", "base", "param_file_path");
-            if (loc_id < 0) {
-                PRRTE_ERROR_LOG(rc);
-                return rc;
-            }
-            rc = prrte_mca_base_var_get_value(loc_id, &tmp_value, NULL, NULL);
-            if (PRRTE_SUCCESS != rc) {
-                PRRTE_ERROR_LOG(rc);
-                return rc;
-            }
-            if( NULL != tmp_value && NULL != tmp_value[0] ) {
-                prrte_argv_append(argc, argv, "-"PRRTE_MCA_CMD_LINE_ID);
-                prrte_argv_append(argc, argv, "mca_base_param_file_path");
-                prrte_argv_append(argc, argv, tmp_value[0]);
-            }
-
-            /* Add the 'path' param */
-            prrte_argv_append(argc, argv, "-"PRRTE_MCA_CMD_LINE_ID);
-            prrte_argv_append(argc, argv, "mca_base_param_file_path_force");
-
-            tmp_value = NULL;
-            loc_id = prrte_mca_base_var_find("prrte", "mca", "base", "param_file_path_force");
-            if (loc_id < 0) {
-                rc = PRRTE_ERR_NOT_FOUND;
-                PRRTE_ERROR_LOG(rc);
-                return rc;
-            }
-            rc = prrte_mca_base_var_get_value(loc_id, &tmp_value, NULL, NULL);
-            if (PRRTE_SUCCESS != rc) {
-                PRRTE_ERROR_LOG(rc);
-                return rc;
-            }
-            if( NULL == tmp_value || NULL == tmp_value[0] ) {
-                /* Get the current working directory */
-                tmp_force = (char *) malloc(sizeof(char) * PRRTE_PATH_MAX);
-                if (NULL == getcwd(tmp_force, PRRTE_PATH_MAX)) {
-                    free(tmp_force);
-                    tmp_force = strdup("");
-                }
-
-                prrte_argv_append(argc, argv, tmp_force);
-                free(tmp_force);
-            } else {
-                prrte_argv_append(argc, argv, tmp_value[0]);
-            }
-        }
     }
 
     /* pass along any cmd line MCA params provided to mpirun,

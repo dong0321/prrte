@@ -12,11 +12,12 @@
  * Copyright (c) 2006-2013 Los Alamos National Security, LLC.
  *                         All rights reserved.
  * Copyright (c) 2010-2011 Cisco Systems, Inc.  All rights reserved.
- * Copyright (c) 2013-2019 Intel, Inc.  All rights reserved.
+ * Copyright (c) 2013-2020 Intel, Inc.  All rights reserved.
  * Copyright (c) 2014      Mellanox Technologies, Inc.
  *                         All rights reserved.
  * Copyright (c) 2014      Research Organization for Information Science
  *                         and Technology (RIST). All rights reserved.
+ * Copyright (c) 2020      IBM Corporation.  All rights reserved.
  * $COPYRIGHT$
  *
  * Additional copyrights may follow
@@ -53,13 +54,25 @@
 
 BEGIN_C_DECLS
 
-#define PRRTED_PMIX_MIN_DMX_TIMEOUT      10
-#define PRRTE_ADJUST_TIMEOUT(a)                                      \
-    do {                                                            \
-        (a)->timeout = (2 * prrte_process_info.num_daemons) / 1000;  \
-        if ((a)->timeout < PRRTED_PMIX_MIN_DMX_TIMEOUT) {            \
-            (a)->timeout = PRRTED_PMIX_MIN_DMX_TIMEOUT;              \
-        }                                                           \
+#define PRRTED_PMIX_MIN_DMX_TIMEOUT      120
+#define PRRTE_ADJUST_TIMEOUT(a)                                         \
+    do {                                                                \
+        size_t _n;                                                      \
+        bool _set = false;                                              \
+        if (NULL != (a)->info) {                                        \
+            for (_n=0; _n < (a)->ninfo; _n++) {                         \
+                if (PMIX_CHECK_KEY(&(a)->info[_n], PMIX_TIMEOUT)) {     \
+                    (a)->timeout = (a)->info[_n].value.data.integer;    \
+                    _set = true;                                        \
+                }                                                       \
+            }                                                           \
+        }                                                               \
+        if (!_set) {                                                    \
+            (a)->timeout = (2 * prrte_process_info.num_daemons) / 10;   \
+            if ((a)->timeout < PRRTED_PMIX_MIN_DMX_TIMEOUT) {           \
+                (a)->timeout = PRRTED_PMIX_MIN_DMX_TIMEOUT;             \
+            }                                                           \
+        }                                                               \
     } while(0)
 
 /* object for tracking requests so we can
@@ -69,7 +82,9 @@ BEGIN_C_DECLS
     prrte_event_t ev;
     char *operation;
     char *cmdline;
+    char *key;
     int status;
+    pmix_status_t pstatus;
     int timeout;
     int room_num;
     int remote_room_num;
@@ -80,9 +95,12 @@ BEGIN_C_DECLS
     pid_t pid;
     pmix_info_t *info;
     size_t ninfo;
+    char *data;
+    size_t sz;
     pmix_data_range_t range;
     prrte_process_name_t proxy;
     prrte_process_name_t target;
+    pmix_proc_t tproc;
     prrte_job_t *jdata;
     prrte_buffer_t msg;
     pmix_op_cbfunc_t opcbfunc;
@@ -139,19 +157,37 @@ typedef struct {
 } prrte_pmix_mdx_caddy_t;
 PRRTE_CLASS_DECLARATION(prrte_pmix_mdx_caddy_t);
 
-#define PRRTE_DMX_REQ(p, cf, ocf, ocd)                       \
-    do {                                                     \
-        pmix_server_req_t *_req;                             \
-        _req = PRRTE_NEW(pmix_server_req_t);                   \
+#define PRRTE_IO_OP(t, nt, b, fn, cfn, cbd)                     \
+    do {                                                        \
+        prrte_pmix_server_op_caddy_t *_cd;                      \
+        _cd = PRRTE_NEW(prrte_pmix_server_op_caddy_t);          \
+        _cd->procs = (t);                                       \
+        _cd->nprocs = (nt);                                     \
+        _cd->server_object = (void*)(b);                        \
+        _cd->cbfunc = (cfn);                                    \
+        _cd->cbdata = (cbd);                                    \
+        prrte_event_set(prrte_event_base, &(_cd->ev), -1,       \
+                        PRRTE_EV_WRITE, (fn), _cd);             \
+        prrte_event_set_priority(&(_cd->ev), PRRTE_MSG_PRI);    \
+        PRRTE_POST_OBJECT(_cd);                                 \
+        prrte_event_active(&(_cd->ev), PRRTE_EV_WRITE, 1);      \
+    } while(0);
+
+#define PRRTE_DMX_REQ(p, i, ni, cf, ocf, ocd)                 \
+    do {                                                      \
+        pmix_server_req_t *_req;                              \
+        _req = PRRTE_NEW(pmix_server_req_t);                  \
         prrte_asprintf(&_req->operation, "DMDX: %s:%d", __FILE__, __LINE__); \
-        _req->target = (p);                                  \
-        _req->mdxcbfunc = (ocf);                             \
-        _req->cbdata = (ocd);                                \
-        prrte_event_set(prrte_event_base, &(_req->ev),         \
+        memcpy(&_req->tproc, (p), sizeof(pmix_proc_t));       \
+        _req->info = (pmix_info_t*)(i);                       \
+        _req->ninfo = (ni);                                   \
+        _req->mdxcbfunc = (ocf);                              \
+        _req->cbdata = (ocd);                                 \
+        prrte_event_set(prrte_event_base, &(_req->ev),        \
                        -1, PRRTE_EV_WRITE, (cf), _req);       \
         prrte_event_set_priority(&(_req->ev), PRRTE_MSG_PRI);  \
         PRRTE_POST_OBJECT(_req);                              \
-        prrte_event_active(&(_req->ev), PRRTE_EV_WRITE, 1);    \
+        prrte_event_active(&(_req->ev), PRRTE_EV_WRITE, 1);   \
     } while(0);
 
 #define PRRTE_SPN_REQ(j, cf, ocf, ocd)                       \

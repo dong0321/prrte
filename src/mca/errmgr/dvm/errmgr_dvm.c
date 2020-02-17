@@ -9,7 +9,7 @@
  * Copyright (c) 2011      Oracle and/or all its affiliates.  All rights reserved.
  * Copyright (c) 2011-2013 Los Alamos National Security, LLC.
  *                         All rights reserved.
- * Copyright (c) 2014-2019 Intel, Inc.  All rights reserved.
+ * Copyright (c) 2014-2020 Intel, Inc.  All rights reserved.
  * Copyright (c) 2017      IBM Corporation.  All rights reserved.
  * $COPYRIGHT$
  *
@@ -319,7 +319,7 @@ static void job_errors(int fd, short args, void *cbdata)
      * we only inform the submitter of the problem, but do NOT terminate
      * the DVM itself */
 
-    rc = jobstate;
+    rc = prrte_pmix_convert_job_state_to_error(jobstate);
     answer = PRRTE_NEW(prrte_buffer_t);
     if (PRRTE_SUCCESS != (ret = prrte_dss.pack(answer, &rc, 1, PRRTE_INT32))) {
         PRRTE_ERROR_LOG(ret);
@@ -354,6 +354,14 @@ static void job_errors(int fd, short args, void *cbdata)
     /* ensure we terminate any processes left running in the DVM */
     _terminate_job(jdata->jobid);
 
+    /* all jobs were spawned by a requestor, so ensure that requestor
+     * has been notified that the spawn completed - otherwise, a quick-failing
+     * job might not generate a spawn response */
+    rc = prrte_plm_base_spawn_reponse(PRRTE_SUCCESS, jdata);
+    if (PRRTE_SUCCESS != rc) {
+        PRRTE_ERROR_LOG(rc);
+    }
+
     /* if the job never launched, then we need to let the
      * state machine know this job failed - it has no
      * other means of being alerted since no proc states
@@ -378,7 +386,7 @@ static void proc_errors(int fd, short args, void *cbdata)
     prrte_proc_t *pptr, *proct;
     prrte_process_name_t *proc = &caddy->name;
     prrte_proc_state_t state = caddy->proc_state;
-    int i;
+    int i, rc;
     int32_t i32, *i32ptr;
 
     PRRTE_ACQUIRE_OBJECT(caddy);
@@ -535,6 +543,14 @@ static void proc_errors(int fd, short args, void *cbdata)
             PRRTE_ACTIVATE_PROC_STATE(&pptr->name, PRRTE_PROC_STATE_IOF_COMPLETE);
         }
         goto cleanup;
+    }
+
+    /* all jobs were spawned by a requestor, so ensure that requestor
+     * has been notified that the spawn completed - otherwise, a quick-failing
+     * job might not generate a spawn response */
+    rc = prrte_plm_base_spawn_reponse(PRRTE_SUCCESS, jdata);
+    if (PRRTE_SUCCESS != rc) {
+        PRRTE_ERROR_LOG(rc);
     }
 
     /* ensure we record the failed proc properly so we can report

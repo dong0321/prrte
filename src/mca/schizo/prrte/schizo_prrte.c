@@ -28,7 +28,6 @@
 
 #include "prrte_config.h"
 #include "types.h"
-#include "types.h"
 
 #ifdef HAVE_UNISTD_H
 #include <unistd.h>
@@ -49,16 +48,17 @@
 #include "src/runtime/prrte_globals.h"
 
 #include "src/mca/schizo/base/base.h"
+#include "schizo_prrte.h"
 
 static int define_cli(prrte_cmd_line_t *cli);
 static int parse_cli(int argc, int start, char **argv,
                      char *personality, char ***target);
 static void parse_proxy_cli(prrte_cmd_line_t *cmd_line,
                             char ***argv);
-static int parse_env(char *path,
-                     prrte_cmd_line_t *cmd_line,
+static int parse_env(prrte_cmd_line_t *cmd_line,
                      char **srcenv,
-                     char ***dstenv);
+                     char ***dstenv,
+                     bool cmdline);
 static int allow_run_as_root(prrte_cmd_line_t *cmd_line);
 static void wrap_args(char **args);
 
@@ -100,23 +100,34 @@ static prrte_cmd_line_init_t cmd_line_init[] = {
     { '\0', "personality", 1, PRRTE_CMD_LINE_TYPE_STRING,
       "Comma-separated list of programming model, languages, and containers being used (default=\"prrte\")",
       PRRTE_CMD_LINE_OTYPE_LAUNCH },
+    { '\0', "prefix", 1, PRRTE_CMD_LINE_TYPE_STRING,
+      "Prefix to be used to look for PRRTE executables",
+      PRRTE_CMD_LINE_OTYPE_DVM },
+    { '\0', "noprefix", 0, PRRTE_CMD_LINE_TYPE_BOOL,
+      "Disable automatic --prefix behavior",
+      PRRTE_CMD_LINE_OTYPE_DVM },
+    { '\0', "daemonize", 0, PRRTE_CMD_LINE_TYPE_BOOL,
+      "Daemonize the DVM daemons into the background",
+      PRRTE_CMD_LINE_OTYPE_DVM },
+    { '\0', "set-sid", 0, PRRTE_CMD_LINE_TYPE_BOOL,
+      "Direct the DVM daemons to separate from the current session",
+      PRRTE_CMD_LINE_OTYPE_DVM },
+    /* Specify the launch agent to be used */
+    { '\0', "launch-agent", 1, PRRTE_CMD_LINE_TYPE_STRING,
+      "Name of daemon executable used to start processes on remote nodes (default: prted)",
+      PRRTE_CMD_LINE_OTYPE_DVM },
+    /* maximum size of VM - typically used to subdivide an allocation */
+    { '\0', "max-vm-size", 1, PRRTE_CMD_LINE_TYPE_INT,
+      "Number of daemons to start",
+      PRRTE_CMD_LINE_OTYPE_DVM },
 
 
     /* setup MCA parameters */
     { '\0', "mca", 2, PRRTE_CMD_LINE_TYPE_STRING,
       "Pass context-specific MCA parameters; they are considered global if --gmca is not used and only one context is specified (arg0 is the parameter name; arg1 is the parameter value)",
       PRRTE_CMD_LINE_OTYPE_LAUNCH },
-    { '\0', "gmca", 2, PRRTE_CMD_LINE_TYPE_STRING,
-      "Pass global MCA parameters that are applicable to all contexts (arg0 is the parameter name; arg1 is the parameter value)",
-      PRRTE_CMD_LINE_OTYPE_LAUNCH },
     { '\0', "prtemca", 2, PRRTE_CMD_LINE_TYPE_STRING,
       "Pass context-specific PRRTE MCA parameters; they are considered global if --gmca is not used and only one context is specified (arg0 is the parameter name; arg1 is the parameter value)",
-      PRRTE_CMD_LINE_OTYPE_LAUNCH },
-    { '\0', "gprtemca", 2, PRRTE_CMD_LINE_TYPE_STRING,
-      "Pass global PRRTE MCA parameters that are applicable to all contexts (arg0 is the parameter name; arg1 is the parameter value)",
-      PRRTE_CMD_LINE_OTYPE_LAUNCH },
-    { '\0', "prteam", 1, PRRTE_CMD_LINE_TYPE_STRING,
-      "Aggregate PRRTE MCA parameter set file list",
       PRRTE_CMD_LINE_OTYPE_LAUNCH },
 
     /* Request parseable help output */
@@ -170,7 +181,8 @@ static char *frameworks[] = {
     "routed",
     "rtc",
     "schizo",
-    "state"
+    "state",
+    NULL,
 };
 
 
@@ -196,18 +208,28 @@ static int define_cli(prrte_cmd_line_t *cli)
     return PRRTE_SUCCESS;
 }
 
+static char *strip_quotes(char *p)
+{
+    char *pout;
+
+    /* strip any quotes around the args */
+    if ('\"' == p[0]) {
+        pout = strdup(&p[1]);
+    } else {
+        pout = strdup(p);
+    }
+    if ('\"' == pout[strlen(pout)- 1]) {
+        pout[strlen(pout)-1] = '\0';
+    }
+    return pout;
+
+}
+
 static int parse_cli(int argc, int start, char **argv,
                      char *personality, char ***target)
 {
-    int i, j, k;
+    int i, j;
     bool ignore;
-    char *no_dups[] = {
-        "grpcomm",
-        "odls",
-        "rml",
-        "routed",
-        NULL
-    };
     char *p1, *p2, *param;
 
     prrte_output_verbose(1, prrte_schizo_base_framework.framework_output,
@@ -221,35 +243,38 @@ static int parse_cli(int argc, int start, char **argv,
 
     for (i = 0; i < (argc-start); ++i) {
         ignore = true;
-        if (0 == strcmp("--mca", argv[i]) ||
-            0 == strcmp("--gmca", argv[i]) ||
-            0 == strcmp("--prtemca", argv[i])) {
+        if (0 == strcmp("--prtemca", argv[i])) {
             if (NULL == argv[i+1] || NULL == argv[i+2]) {
                 /* this is an error */
                 return PRRTE_ERR_FATAL;
             }
-            /* strip any quotes around the args */
-            if ('\"' == argv[i+1][0]) {
-                p1 = &argv[i+1][1];
+            p1 = strip_quotes(argv[i+1]);
+            p2 = strip_quotes(argv[i+2]);
+            if (NULL == target) {
+                /* push it into our environment */
+                asprintf(&param, "PRRTE_MCA_%s", p1);
+                prrte_output_verbose(1, prrte_schizo_base_framework.framework_output,
+                                     "%s schizo:prrte:parse_cli pushing %s into environment",
+                                     PRRTE_NAME_PRINT(PRRTE_PROC_MY_NAME), param);
+                prrte_setenv(param, p2, true, &environ);
             } else {
-                p1 = argv[i+1];
+                prrte_argv_append_nosize(target, "--prtemca");
+                prrte_argv_append_nosize(target, p1);
+                prrte_argv_append_nosize(target, p2);
             }
-            if ('\"' == p1[strlen(p1)- 1]) {
-                p1[strlen(p1)-1] = '\0';
+            free(p1);
+            free(p2);
+        } else if (0 == strcmp("--mca", argv[i])) {
+            if (NULL == argv[i+1] || NULL == argv[i+2]) {
+                /* this is an error */
+                return PRRTE_ERR_FATAL;
             }
-            if ('\"' == argv[i+2][0]) {
-                p2 = &argv[i+2][1];
-            } else {
-                p2 = argv[i+2];
-            }
-            if ('\"' == p2[strlen(p2)- 1]) {
-                p1[strlen(p2)-1] = '\0';
-            }
+            p1 = strip_quotes(argv[i+1]);
+            p2 = strip_quotes(argv[i+2]);
 
             /* this is a generic MCA designation, so see if the parameter it
              * refers to belongs to one of our frameworks */
-            if (0 == strcmp("--prtemca", argv[i]) ||
-                0 == strncmp("prrte", p1, strlen("prrte"))) {
+            if (0 == strncmp("prrte", p1, strlen("prrte"))) {
                 ignore = false;
             } else {
                 for (j=0; NULL != frameworks[j]; j++) {
@@ -259,78 +284,43 @@ static int parse_cli(int argc, int start, char **argv,
                     }
                 }
             }
-            if (ignore) {
-                continue;
-            }
-            /* see if this is already present so we at least can
-             * avoid growing the cmd line with duplicates
-             */
-            for (j=0; NULL != target && NULL != *target[j]; j++) {
-                if (0 == strcmp(p1, *target[j])) {
-                    /* already here - if the value is the same,
-                     * we can quitely ignore the fact that they
-                     * provide it more than once. However, some
-                     * frameworks are known to have problems if the
-                     * value is different. We don't have a good way
-                     * to know this, but we at least make a crude
-                     * attempt here to protect ourselves.
-                     */
-                    if (0 == strcmp(p2, *target[j+1])) {
-                        /* values are the same */
-                        ignore = true;
-                        break;
-                    } else {
-                        /* values are different - see if this is a problem */
-                        for (k=0; NULL != no_dups[k]; k++) {
-                            if (0 == strcmp(no_dups[k], p1)) {
-                                /* print help message
-                                 * and abort as we cannot know which one is correct
-                                 */
-                                prrte_show_help("help-prrterun.txt", "prrterun:conflicting-params",
-                                               true, prrte_tool_basename, p1,
-                                               p2, *target[j+1]);
-                                return PRRTE_ERR_BAD_PARAM;
-                            }
-                        }
-                        /* this passed muster - just ignore it */
-                        ignore = true;
-                        break;
-                    }
-                }
-            }
             if (!ignore) {
                 if (NULL == target) {
                     /* push it into our environment */
                     asprintf(&param, "PRRTE_MCA_%s", p1);
+                    prrte_output_verbose(1, prrte_schizo_base_framework.framework_output,
+                                         "%s schizo:prrte:parse_cli pushing %s into environment",
+                                         PRRTE_NAME_PRINT(PRRTE_PROC_MY_NAME), param);
                     prrte_setenv(param, p2, true, &environ);
                 } else {
-                    prrte_argv_append_nosize(target, argv[i]);
+                    prrte_argv_append_nosize(target, "--prtemca");
                     prrte_argv_append_nosize(target, p1);
                     prrte_argv_append_nosize(target, p2);
                 }
             }
+            free(p1);
+            free(p2);
             i += 2;
         }
     }
     return PRRTE_SUCCESS;
 }
 
-static int parse_env(char *path,
-                     prrte_cmd_line_t *cmd_line,
+static int parse_env(prrte_cmd_line_t *cmd_line,
                      char **srcenv,
-                     char ***dstenv)
+                     char ***dstenv,
+                     bool cmdline)
 {
-    int i, j;
-    char *param;
+    int i;
+    char *param, *p1;
     char *value;
-    prrte_value_t *pval;
 
     prrte_output_verbose(1, prrte_schizo_base_framework.framework_output,
                         "%s schizo:prrte: parse_env",
                         PRRTE_NAME_PRINT(PRRTE_PROC_MY_NAME));
 
     for (i = 0; NULL != srcenv[i]; ++i) {
-        if (0 == strncmp("PRRTE_", srcenv[i], strlen("PRRTE_"))) {
+        if (0 == strncmp("PRRTE_MCA_", srcenv[i], strlen("PRRTE_MCA_"))) {
             /* check for duplicate in app->env - this
              * would have been placed there by the
              * cmd line processor. By convention, we
@@ -338,46 +328,33 @@ static int parse_env(char *path,
              * environment
              */
             param = strdup(srcenv[i]);
+            p1 = param + strlen("PRRTE_MCA_");
             value = strchr(param, '=');
             *value = '\0';
             value++;
-            prrte_setenv(param, value, false, dstenv);
-            free(param);
-        }
-    }
-
-    if (NULL == cmd_line) {
-        /* we are done */
-        return PRRTE_SUCCESS;
-    }
-
-    /* Did the user request to export any environment variables on the cmd line? */
-    if (prrte_cmd_line_is_taken(cmd_line, "x")) {
-        j = prrte_cmd_line_get_ninsts(cmd_line, "x");
-        for (i = 0; i < j; ++i) {
-            pval = prrte_cmd_line_get_param(cmd_line, "x", i, 0);
-            param = pval->data.string;
-
-            if (NULL != (value = strchr(param, '='))) {
-                /* terminate the name of the param */
-                *value = '\0';
-                /* step over the equals */
-                value++;
-                /* overwrite any prior entry */
-                prrte_setenv(param, value, true, dstenv);
-                /* save it for any comm_spawn'd apps */
-                prrte_setenv(param, value, true, &prrte_forwarded_envars);
+            if (cmdline) {
+                prrte_output_verbose(1, prrte_schizo_base_framework.framework_output,
+                                     "%s schizo:prrte:parse_env adding %s %s to cmd line",
+                                     PRRTE_NAME_PRINT(PRRTE_PROC_MY_NAME), p1, value);
+                prrte_argv_append_nosize(dstenv, "--prtemca");
+                prrte_argv_append_nosize(dstenv, p1);
+                prrte_argv_append_nosize(dstenv, value);
             } else {
-                value = getenv(param);
-                if (NULL != value) {
-                    /* overwrite any prior entry */
+                if (environ != srcenv) {
+                    /* push it into our environment */
+                    prrte_output_verbose(1, prrte_schizo_base_framework.framework_output,
+                                         "%s schizo:prrte:parse_env pushing %s=%s into my environment",
+                                         PRRTE_NAME_PRINT(PRRTE_PROC_MY_NAME), param, value);
+                    prrte_setenv(param, value, true, &environ);
+                }
+                if (NULL != dstenv) {
+                    prrte_output_verbose(1, prrte_schizo_base_framework.framework_output,
+                                         "%s schizo:prrte:parse_env pushing %s=%s into dest environment",
+                                         PRRTE_NAME_PRINT(PRRTE_PROC_MY_NAME), param, value);
                     prrte_setenv(param, value, true, dstenv);
-                    /* save it for any comm_spawn'd apps */
-                    prrte_setenv(param, value, true, &prrte_forwarded_envars);
-                } else {
-                    prrte_output(0, "Warning: could not find environment variable \"%s\"\n", param);
                 }
             }
+            free(param);
         }
     }
 
@@ -409,9 +386,7 @@ static void wrap_args(char **args)
     char *tstr;
 
     for (i=0; NULL != args && NULL != args[i]; i++) {
-        if (0 == strcmp(args[i], "--mca") ||
-            0 == strcmp(args[i], "--gmca") ||
-            0 == strcmp(args[i], "--prtemca")) {
+        if (0 == strcmp(args[i], "--prtemca")) {
             if (NULL == args[i+1] || NULL == args[i+2]) {
                 /* this should be impossible as the error would
                  * have been detected well before here, but just
@@ -419,6 +394,10 @@ static void wrap_args(char **args)
                 return;
             }
             i += 2;
+            /* if the argument already has quotes, then leave it alone */
+            if ('\"' == args[i][0]) {
+                continue;
+            }
             prrte_asprintf(&tstr, "\"%s\"", args[i]);
             free(args[i]);
             args[i] = tstr;
@@ -463,6 +442,24 @@ static void parse_proxy_cli(prrte_cmd_line_t *cmd_line,
         ptr = prrte_argv_join(hosts, ',');
         prrte_argv_append_nosize(argv, ptr);
         free(ptr);
+    }
+    if (0 < (i = prrte_cmd_line_get_ninsts(cmd_line, "daemonize"))) {
+        prrte_argv_append_nosize(argv, "--daemonize");
+    }
+    if (0 < (i = prrte_cmd_line_get_ninsts(cmd_line, "set-sid"))) {
+        prrte_argv_append_nosize(argv, "--set-sid");
+    }
+    if (0 < (i = prrte_cmd_line_get_ninsts(cmd_line, "launch-agent"))) {
+        prrte_argv_append_nosize(argv, "--launch-agent");
+        pval = prrte_cmd_line_get_param(cmd_line, "launch-agent", 0, 0);
+        prrte_argv_append_nosize(argv, pval->data.string);
+    }
+    if (0 < (i = prrte_cmd_line_get_ninsts(cmd_line, "max-vm-size"))) {
+        prrte_argv_append_nosize(argv, "--max-vm-size");
+        pval = prrte_cmd_line_get_param(cmd_line, "max-vm-size", 0, 0);
+        prrte_asprintf(&value, "%d", pval->data.integer);
+        prrte_argv_append_nosize(argv, value);
+        free(value);
     }
     /* harvest all the MCA params in the environ */
     for (i = 0; NULL != environ[i]; ++i) {

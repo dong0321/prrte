@@ -139,12 +139,6 @@ static prrte_cmd_line_t *prrte_cmd_line = NULL;
  */
 prrte_cmd_line_init_t prrte_cmd_line_opts[] = {
     /* DVM-specific options */
-    { '\0', "daemonize", 0, PRRTE_CMD_LINE_TYPE_BOOL,
-      "Daemonize the DVM daemons into the background",
-      PRRTE_CMD_LINE_OTYPE_DVM },
-    { '\0', "set-sid", 0, PRRTE_CMD_LINE_TYPE_BOOL,
-      "Direct the DVM daemons to separate from the current session",
-      PRRTE_CMD_LINE_OTYPE_DVM },
     /* uri of PMIx publish/lookup server, or at least where to get it */
     { '\0', "prrte-server", 1, PRRTE_CMD_LINE_TYPE_STRING,
       "Specify the URI of the publish/lookup server, or the name of the file (specified as file:filename) that contains that info",
@@ -282,6 +276,8 @@ int main(int argc, char *argv[])
         return ret;
     }
     /* scan for personalities */
+    prrte_argv_append_unique_nosize(&prrte_schizo_base.personalities, "prrte", false);
+    prrte_argv_append_unique_nosize(&prrte_schizo_base.personalities, "pmix", false);
     for (i=0; NULL != argv[i]; i++) {
         if (0 == strcmp(argv[i], "--personality")) {
             prrte_argv_append_unique_nosize(&prrte_schizo_base.personalities, argv[i+1], false);
@@ -327,7 +323,7 @@ int main(int argc, char *argv[])
     if (prrte_cmd_line_is_taken(prrte_cmd_line, "help")) {
         char *str, *args = NULL;
         args = prrte_cmd_line_get_usage_msg(prrte_cmd_line, false);
-        str = prrte_show_help_string("help-prrterun.txt", "prrterun:usage", false,
+        str = prrte_show_help_string("help-prun.txt", "prun:usage", false,
                                     prrte_tool_basename, "PRRTE", PRRTE_VERSION,
                                     prrte_tool_basename, args,
                                     PACKAGE_BUGREPORT);
@@ -655,23 +651,34 @@ int main(int argc, char *argv[])
     /* include our node name */
     prrte_dss.pack(buffer, &prrte_process_info.nodename, 1, PRRTE_STRING);
 
-    /* if requested, include any non-loopback aliases for this node */
-    if (prrte_retain_aliases) {
+    /* include any non-loopback aliases for this node */
+    {
         uint8_t naliases, ni;
+        char **nonlocal = NULL;
+        int n;
 
-        naliases = prrte_argv_count(prrte_process_info.aliases);
+        for (n=0; NULL != prrte_process_info.aliases[n]; n++) {
+            if (0 != strcmp(prrte_process_info.aliases[n], "localhost") &&
+                0 != strcmp(prrte_process_info.aliases[n], prrte_process_info.nodename)) {
+                prrte_argv_append_nosize(&nonlocal, prrte_process_info.aliases[n]);
+            }
+        }
+        naliases = prrte_argv_count(nonlocal);
         if (PRRTE_SUCCESS != (ret = prrte_dss.pack(buffer, &naliases, 1, PRRTE_UINT8))) {
             PRRTE_ERROR_LOG(ret);
             PRRTE_RELEASE(buffer);
+            prrte_argv_free(nonlocal);
             goto DONE;
         }
         for (ni=0; ni < naliases; ni++) {
-            if (PRRTE_SUCCESS != (ret = prrte_dss.pack(buffer, &prrte_process_info.aliases[ni], 1, PRRTE_STRING))) {
+            if (PRRTE_SUCCESS != (ret = prrte_dss.pack(buffer, &nonlocal[ni], 1, PRRTE_STRING))) {
                 PRRTE_ERROR_LOG(ret);
                 PRRTE_RELEASE(buffer);
+                prrte_argv_free(nonlocal);
                 goto DONE;
             }
         }
+        prrte_argv_free(nonlocal);
     }
 
     /* always send back our topology signature - this is a small string

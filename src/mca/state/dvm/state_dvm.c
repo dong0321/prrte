@@ -17,8 +17,12 @@
 #endif  /* HAVE_UNISTD_H */
 #include <string.h>
 
+#include "src/util/nidmap.h"
 #include "src/util/output.h"
+#include "src/util/os_dirpath.h"
+#include "src/util/proc_info.h"
 #include "src/pmix/pmix-internal.h"
+#include "src/prted/pmix/pmix_server.h"
 
 #include "src/mca/errmgr/errmgr.h"
 #include "src/mca/filem/filem.h"
@@ -31,8 +35,6 @@
 #include "src/mca/rml/rml.h"
 #include "src/mca/rml/base/rml_contact.h"
 #include "src/mca/routed/routed.h"
-#include "src/util/nidmap.h"
-#include "src/util/session_dir.h"
 #include "src/threads/threads.h"
 #include "src/runtime/prrte_quit.h"
 #include "src/runtime/prrte_wait.h"
@@ -417,6 +419,7 @@ static void check_complete(int fd, short args, void *cbdata)
     prrte_byte_object_t bo, *boptr;
     pmix_status_t ret;
     prrte_pointer_array_t procs;
+    char *tmp;
 
     PRRTE_ACQUIRE_OBJECT(caddy);
     jdata = caddy->jdata;
@@ -454,6 +457,11 @@ static void check_complete(int fd, short args, void *cbdata)
         jdata->state = PRRTE_JOB_STATE_TERMINATED;
     }
 
+    /* cleanup any pending server ops */
+    PRRTE_PMIX_CONVERT_JOBID(pname.nspace, jdata->jobid);
+    pname.rank = PMIX_RANK_WILDCARD;
+    prrte_pmix_server_clear(&pname);
+
     /* cleanup the procs as these are gone */
     for (i=0; i < prrte_local_children->size; i++) {
         if (NULL == (proc = (prrte_proc_t*)prrte_pointer_array_get_item(prrte_local_children, i))) {
@@ -473,7 +481,6 @@ static void check_complete(int fd, short args, void *cbdata)
     }
 
     /* tell the PMIx subsystem the job is complete */
-    PRRTE_PMIX_CONVERT_JOBID(pname.nspace, jdata->jobid);
     PRRTE_PMIX_CONSTRUCT_LOCK(&lock);
     PMIx_server_deregister_nspace(pname.nspace, opcbfunc, &lock);
     PRRTE_PMIX_WAIT_THREAD(&lock);
@@ -589,6 +596,14 @@ static void check_complete(int fd, short args, void *cbdata)
             }
         }
         PRRTE_DESTRUCT(&procs);
+    }
+
+    /* remove the session directory tree */
+    if (0 > prrte_asprintf(&tmp, "%s/%d", prrte_process_info.jobfam_session_dir, PRRTE_LOCAL_JOBID(jdata->jobid))) {
+        PRRTE_ERROR_LOG(PRRTE_ERR_OUT_OF_RESOURCE);
+    } else {
+        prrte_os_dirpath_destroy(tmp, true, NULL);
+        free(tmp);
     }
 
     if (jdata->state != PRRTE_JOB_STATE_NOTIFIED) {

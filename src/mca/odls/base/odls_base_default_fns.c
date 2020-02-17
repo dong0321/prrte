@@ -14,7 +14,7 @@
  * Copyright (c) 2011-2013 Los Alamos National Security, LLC.
  *                         All rights reserved.
  * Copyright (c) 2011-2017 Cisco Systems, Inc.  All rights reserved
- * Copyright (c) 2013-2019 Intel, Inc.  All rights reserved.
+ * Copyright (c) 2013-2020 Intel, Inc.  All rights reserved.
  * Copyright (c) 2014-2019 Research Organization for Information Science
  *                         and Technology (RIST).  All rights reserved.
  * Copyright (c) 2017      Mellanox Technologies Ltd. All rights reserved.
@@ -922,11 +922,23 @@ void prrte_odls_base_spawn_proc(int fd, short sd, void *cbdata)
     prrte_proc_state_t state;
     pmix_proc_t pproc;
     pmix_status_t ret;
+    char *ptr;
 
     PRRTE_ACQUIRE_OBJECT(cd);
 
     /* thread-protect common values */
-    cd->env = prrte_argv_copy(app->env);
+    cd->env = prrte_argv_copy(prrte_launch_environ);
+    if (NULL != app->env) {
+        for (i=0; NULL != app->env[i]; i++) {
+            /* find the '=' sign */
+            ptr = strchr(app->env[i], '=');
+            *ptr = '\0';
+            ++ptr;
+            prrte_setenv(app->env[i], ptr, true, &cd->env);
+            --ptr;
+            *ptr = '=';
+        }
+    }
 
     /* ensure we clear any prior info regarding state or exit status in
      * case this is a restart
@@ -1099,11 +1111,9 @@ void prrte_odls_base_default_launch_local(int fd, short sd, void *cbdata)
     }
     /* find the jobdat for this job */
     if (NULL == (jobdat = prrte_get_job_data_object(job))) {
-        PRRTE_ERROR_LOG(PRRTE_ERR_NOT_FOUND);
-        /* not much we can do here - we are just hosed, so
-         * report that to the error manager
-         */
-        PRRTE_ACTIVATE_JOB_STATE(NULL, PRRTE_JOB_STATE_FAILED_TO_LAUNCH);
+        /* not much we can do here - the most likely explanation
+         * is that a job that didn't involve us already completed
+         * and was removed. This isn't an error so just move along */
         goto ERROR_OUT;
     }
 
@@ -1725,18 +1735,16 @@ void prrte_odls_base_default_wait_local_proc(int fd, short sd, void *cbdata)
          */
         state = PRRTE_PROC_STATE_ABORTED_BY_SIG;
         /* If a process was killed by a signal, then make the
-         * exit code of prrterun be "signo + 128" so that "prog"
-         * and "prrterun prog" will both yield the same exit code.
+         * exit code of prun be "signo + 128" so that "prog"
+         * and "prun prog" will both yield the same exit code.
          *
          * This is actually what the shell does for you when
-         * a process dies by signal, so this makes prrterun treat
+         * a process dies by signal, so this makes prun treat
          * the termination code to exit status translation the
          * same way
          */
-        proc->exit_code = WTERMSIG(proc->exit_code) + 128;
-
         PRRTE_OUTPUT_VERBOSE((5, prrte_odls_base_framework.framework_output,
-                             "%s odls:waitpid_fired child process %s terminated with signal",
+                             "%s odls:waitpid_fired child process %s terminated with signal %s",
                              PRRTE_NAME_PRINT(PRRTE_PROC_MY_NAME),
                              PRRTE_NAME_PRINT(&proc->name) ));
        //for perf test
@@ -1767,6 +1775,9 @@ void prrte_odls_base_default_wait_local_proc(int fd, short sd, void *cbdata)
         /* regardless of our eventual code path, we need to
          * flag that this proc has had its waitpid fired */
         PRRTE_FLAG_SET(proc, PRRTE_PROC_FLAG_WAITPID);
+                             PRRTE_NAME_PRINT(&proc->name), strsignal(WTERMSIG(proc->exit_code))));
+        proc->exit_code = WTERMSIG(proc->exit_code) + 128;
+
         /* Do not decrement the number of local procs here. That is handled in the errmgr */
     }
 
@@ -1938,7 +1949,8 @@ int prrte_odls_base_default_kill_local_procs(prrte_pointer_array_t *procs,
             /* check for everything complete - this will remove
              * the child object from our local list
              */
-            if (PRRTE_FLAG_TEST(child, PRRTE_PROC_FLAG_IOF_COMPLETE) &&
+            if (!prrte_finalizing &&
+                PRRTE_FLAG_TEST(child, PRRTE_PROC_FLAG_IOF_COMPLETE) &&
                 PRRTE_FLAG_TEST(child, PRRTE_PROC_FLAG_WAITPID)) {
                 PRRTE_ACTIVATE_PROC_STATE(&child->name, child->state);
             }
@@ -2004,7 +2016,8 @@ int prrte_odls_base_default_kill_local_procs(prrte_pointer_array_t *procs,
             /* check for everything complete - this will remove
              * the child object from our local list
              */
-            if (PRRTE_FLAG_TEST(cd->child, PRRTE_PROC_FLAG_IOF_COMPLETE) &&
+            if (!prrte_finalizing &&
+                PRRTE_FLAG_TEST(cd->child, PRRTE_PROC_FLAG_IOF_COMPLETE) &&
                 PRRTE_FLAG_TEST(cd->child, PRRTE_PROC_FLAG_WAITPID)) {
                 PRRTE_ACTIVATE_PROC_STATE(&cd->child->name, cd->child->state);
             }
@@ -2108,6 +2121,9 @@ int prrte_odls_base_default_restart_proc(prrte_proc_t *child,
         return PRRTE_ERR_NOT_FOUND;
     }
 
+    /* CHECK THE NUMBER OF TIMES THIS CHILD HAS BEEN RESTARTED
+     * AGAINST MAX_RESTARTS */
+
     child->state = PRRTE_PROC_STATE_FAILED_TO_START;
     child->exit_code = 0;
     PRRTE_FLAG_UNSET(child, PRRTE_PROC_FLAG_WAITPID);
@@ -2133,6 +2149,8 @@ int prrte_odls_base_default_restart_proc(prrte_proc_t *child,
         }
         goto CLEANUP;
     }
+
+    /* NEED TO UPDATE THE REINCARNATION NUMBER IN PMIX */
 
     /* dispatch this child to the next available launch thread */
     cd = PRRTE_NEW(prrte_odls_spawn_caddy_t);

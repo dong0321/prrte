@@ -13,7 +13,7 @@
  *                         All rights reserved.
  * Copyright (c) 2009-2018 Cisco Systems, Inc.  All rights reserved
  * Copyright (c) 2011      Oak Ridge National Labs.  All rights reserved.
- * Copyright (c) 2013-2019 Intel, Inc.  All rights reserved.
+ * Copyright (c) 2013-2020 Intel, Inc.  All rights reserved.
  * Copyright (c) 2014      Mellanox Technologies, Inc.
  *                         All rights reserved.
  * Copyright (c) 2014-2019 Research Organization for Information Science
@@ -39,6 +39,7 @@
 #include "types.h"
 #include "src/util/argv.h"
 #include "src/util/output.h"
+#include "src/util/os_dirpath.h"
 #include "src/util/error.h"
 #include "src/hwloc/hwloc-internal.h"
 #include "src/pmix/pmix-internal.h"
@@ -82,6 +83,7 @@ int prrte_pmix_server_register_nspace(prrte_job_t *jdata)
     size_t nmsize;
     pmix_server_pset_t *pset;
     prrte_value_t *val;
+    uint32_t ui32;
 
     prrte_output_verbose(2, prrte_pmix_server_globals.output,
                         "%s register nspace for %s",
@@ -316,6 +318,25 @@ int prrte_pmix_server_register_nspace(prrte_job_t *jdata)
         }
     }
 
+    /* pass the top-level session directory - this is our jobfam session dir */
+    kv = PRRTE_NEW(prrte_info_item_t);
+    PMIX_INFO_LOAD(&kv->info, PMIX_TMPDIR, prrte_process_info.jobfam_session_dir, PMIX_STRING);
+    prrte_list_append(info, &kv->super);
+
+    /* create and pass a job-level session directory */
+    if (0 > prrte_asprintf(&tmp, "%s/%d", prrte_process_info.jobfam_session_dir, PRRTE_LOCAL_JOBID(jdata->jobid))) {
+        PRRTE_ERROR_LOG(PRRTE_ERR_OUT_OF_RESOURCE);
+        return PRRTE_ERR_OUT_OF_RESOURCE;
+    }
+    if (PRRTE_SUCCESS != (rc = prrte_os_dirpath_create(prrte_process_info.jobfam_session_dir, S_IRWXU))) {
+        PRRTE_ERROR_LOG(rc);
+        return rc;
+    }
+    kv = PRRTE_NEW(prrte_info_item_t);
+    PMIX_INFO_LOAD(&kv->info, PMIX_NSDIR, tmp, PMIX_STRING);
+    free(tmp);
+    prrte_list_append(info, &kv->super);
+
     /* register any local clients */
     vpid = PRRTE_VPID_MAX;
     PRRTE_PMIX_CONVERT_JOBID(pproc.nspace, jdata->jobid);
@@ -405,6 +426,21 @@ int prrte_pmix_server_register_nspace(prrte_job_t *jdata)
                     PMIX_INFO_LOAD(&kv->info, PMIX_LOCALITY_STRING, NULL, PMIX_STRING);
                     prrte_list_append(pmap, &kv->super);
                 }
+                /* create and pass a proc-level session directory */
+                if (0 > prrte_asprintf(&tmp, "%s/%d/%d",
+                                       prrte_process_info.jobfam_session_dir,
+                                       PRRTE_LOCAL_JOBID(jdata->jobid), pptr->name.vpid)) {
+                    PRRTE_ERROR_LOG(PRRTE_ERR_OUT_OF_RESOURCE);
+                    return PRRTE_ERR_OUT_OF_RESOURCE;
+                }
+                if (PRRTE_SUCCESS != (rc = prrte_os_dirpath_create(tmp, S_IRWXU))) {
+                    PRRTE_ERROR_LOG(rc);
+                    return rc;
+                }
+                kv = PRRTE_NEW(prrte_info_item_t);
+                PMIX_INFO_LOAD(&kv->info, PMIX_PROCDIR, tmp, PMIX_STRING);
+                free(tmp);
+                prrte_list_append(pmap, &kv->super);
             }
 
             /* global/univ rank */
@@ -472,6 +508,14 @@ int prrte_pmix_server_register_nspace(prrte_job_t *jdata)
             kv = PRRTE_NEW(prrte_info_item_t);
             PMIX_INFO_LOAD(&kv->info, PMIX_NODEID, &pptr->node->index, PMIX_UINT32);
             prrte_list_append(pmap, &kv->super);
+
+#if PMIX_NUMERIC_VERSION >= 0x00040000
+            /* reincarnation number */
+            ui32 = 0;  // we are starting this proc for the first time
+            kv = PRRTE_NEW(prrte_info_item_t);
+            PMIX_INFO_LOAD(&kv->info, PMIX_REINCARNATION, &ui32, PMIX_UINT32);
+            prrte_list_append(pmap, &kv->super);
+#endif
 
             if (map->num_nodes < prrte_hostname_cutoff) {
                 kv = PRRTE_NEW(prrte_info_item_t);

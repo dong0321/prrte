@@ -9,8 +9,8 @@
  * $HEADER$
  */
 
-#ifndef _MCA_SCHIZO_OMPI_H_
-#define _MCA_SCHIZO_OMPI_H_
+#ifndef _MCA_SCHIZO_PRRTE_H_
+#define _MCA_SCHIZO_PRRTE_H_
 
 #include "prrte_config.h"
 
