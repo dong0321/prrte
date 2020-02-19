@@ -1772,10 +1772,7 @@ void prrte_odls_base_default_wait_local_proc(int fd, short sd, void *cbdata)
         PRRTE_OUTPUT_VERBOSE((5, prrte_odls_base_framework.framework_output,
                     "%s odls:event notify in odls proc %d:%d gone",
                     PRRTE_NAME_PRINT(PRRTE_PROC_MY_NAME), proc->name.jobid, proc->name.vpid));
-        /* regardless of our eventual code path, we need to
-         * flag that this proc has had its waitpid fired */
         PRRTE_FLAG_SET(proc, PRRTE_PROC_FLAG_WAITPID);
-                             PRRTE_NAME_PRINT(&proc->name), strsignal(WTERMSIG(proc->exit_code))));
         proc->exit_code = WTERMSIG(proc->exit_code) + 128;
 
         /* Do not decrement the number of local procs here. That is handled in the errmgr */
