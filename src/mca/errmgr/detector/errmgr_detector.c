@@ -488,7 +488,7 @@ static void fd_event_cb(int fd, short flags, void* pdetector) {
         /* if first time detected */
         if (errmgr_get_daemon_status(temp_proc_name)){
             PRRTE_OUTPUT_VERBOSE((5, prrte_errmgr_base_framework.framework_output,
-                        "errmgr:detector %d observing %d",
+                        "errmgr:detector %d detected daemon %d failed, heartbeat delay",
                         prrte_process_info.my_name.vpid, detector->hb_observing));
             prrte_propagate.prp(&temp_proc_name.jobid, NULL, &temp_proc_name,PRRTE_ERR_PROC_ABORTED );
 

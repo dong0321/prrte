@@ -1746,12 +1746,7 @@ void prrte_odls_base_default_wait_local_proc(int fd, short sd, void *cbdata)
         PRRTE_OUTPUT_VERBOSE((5, prrte_odls_base_framework.framework_output,
                              "%s odls:waitpid_fired child process %s terminated with signal %s",
                              PRRTE_NAME_PRINT(PRRTE_PROC_MY_NAME),
-                             PRRTE_NAME_PRINT(&proc->name) ));
-       //for perf test
-        char host_name[255];
-        gethostname(host_name, 255);
-        PRRTE_OUTPUT_VERBOSE((5, prrte_odls_base_framework.framework_output,
-                            "odls: proc error on host %s at time %f", host_name, RTE_Wtime_test()));
+                             PRRTE_NAME_PRINT(&proc->name), strsignal(WTERMSIG(proc->exit_code))));
 
         /* register an event handler for the PRRTE_ERR_PROC_ABORTED event */
         pmix_proc_t pname, psource;

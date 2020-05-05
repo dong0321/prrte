@@ -240,7 +240,7 @@ static int prrte_propagate_prperror(prrte_jobid_t *job, prrte_process_name_t *so
 
         node = (prrte_node_t*)prrte_pointer_array_get_item(prrte_node_pool, errorproc->vpid);
 
-        cnt=node->num_procs;
+        cnt=node->num_procs /2 ; //prrte issue, num_procs value is not correct
         if (PRRTE_SUCCESS != (rc = prrte_dss.pack(&prperror_buffer, &cnt, 1, PRRTE_INT))) {
             PRRTE_ERROR_LOG(rc);
             PRRTE_DESTRUCT(&prperror_buffer);

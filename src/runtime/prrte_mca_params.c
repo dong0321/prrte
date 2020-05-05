@@ -704,7 +704,7 @@ int prrte_register_params(void)
                                   PRRTE_INFO_LVL_9, PRRTE_MCA_BASE_VAR_SCOPE_READONLY,
                                   &prrte_do_not_barrier);
 
-    prrte_enable_recovery = false;
+    prrte_enable_recovery = true; //false;
     (void) prrte_mca_base_var_register ("prrte", "prrte", NULL, "enable_recovery",
                                   "Enable recovery from process failure [Default = disabled]",
                                   PRRTE_MCA_BASE_VAR_TYPE_BOOL, NULL, 0, 0,
@@ -734,7 +734,7 @@ int prrte_register_params(void)
         prrte_enable_recovery = true;
     }
 
-    prrte_abort_non_zero_exit = false;
+    prrte_abort_non_zero_exit = true;//false;
     (void) prrte_mca_base_var_register ("prrte", "prrte", NULL, "abort_on_non_zero_status",
                                   "Abort the job if any process returns a non-zero exit status - no restart in such cases",
                                   PRRTE_MCA_BASE_VAR_TYPE_BOOL, NULL, 0, 0,
